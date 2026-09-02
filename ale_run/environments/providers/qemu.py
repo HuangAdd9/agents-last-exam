@@ -20,9 +20,10 @@ import stat
 import subprocess
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any, Callable, Literal, cast
+from typing import Any, Literal, cast
 
 from ...base_interface import Provider, ReleaseMode, SandboxHandle, SandboxSpec
 
@@ -30,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 RunnerPullPolicy = Literal["always", "missing", "never"]
 
-_DEFAULT_RUNNER_IMAGE = "agentslastexam/ale-qemu:0.2.0"
+_DEFAULT_RUNNER_IMAGE = "agentslastexam/ale-qemu:0.3.0"
 _DEFAULT_CUA_PORT = 5000
 _DEFAULT_NOVNC_PORT = 8006
 _CONTAINER_PREFIX = "ale-qemu"
@@ -146,7 +147,7 @@ def _parse_hf_disk_manifest(raw: Any) -> _HuggingFaceDiskManifest:
     part_filenames: set[str] = set()
     for index, part_raw in enumerate(parts_raw):
         if not isinstance(part_raw, dict):
-            raise ValueError(f"QEMU disk manifest part {index} must be a mapping")
+            raise TypeError(f"QEMU disk manifest part {index} must be a mapping")
         part_filename = _validate_hf_relative_path(
             str(part_raw.get("filename") or ""),
             field=f"parts[{index}].filename",
@@ -242,8 +243,7 @@ def _build_snapshot_config(raw: dict[str, Any]) -> QemuSnapshotConfig:
 def _cache_destination(snapshot: QemuSnapshotConfig, source: str) -> Path:
     if source.startswith("hf://"):
         filename = _parse_hf_source(source).filename
-        if filename.endswith(_HF_DISK_MANIFEST_SUFFIX):
-            filename = filename[: -len(_HF_DISK_MANIFEST_SUFFIX)]
+        filename = filename.removesuffix(_HF_DISK_MANIFEST_SUFFIX)
         return snapshot.image_cache_dir / filename
     filename = source.rstrip("/").rsplit("/", 1)[-1]
     if not filename:
@@ -517,6 +517,7 @@ class QemuProvider(Provider):
                 snapshot=snapshot,
                 name=name,
                 task_id=spec.task_id,
+                guest_os=image.os,
                 base_qcow2=base_qcow2,
                 storage_dir=storage_dir,
                 exchange_dir=exchange_dir,
@@ -562,9 +563,8 @@ class QemuProvider(Provider):
                 "base_qcow2": str(base_qcow2),
                 "overlay_qcow2": str(storage_dir / "data.qcow2"),
                 "exchange_host_dir": str(exchange_dir),
-                "exchange_guest_share": (
-                    "//172.30.0.1/Data" if image.os == "linux" else r"\\host.lan\Data"
-                ),
+                "exchange_guest_share": ("shared" if image.os == "linux" else r"\\host.lan\Data"),
+                "exchange_guest_transport": "9p" if image.os == "linux" else "smb",
                 "cua_port": cua_port,
                 "novnc_port": novnc_port,
                 "novnc_url": f"http://{client_host}:{novnc_port}",
@@ -683,6 +683,7 @@ class QemuProvider(Provider):
 
     def open_session(self, sandbox: SandboxHandle) -> Any:
         from cua_bench.computers.remote import RemoteDesktopSession
+
         from .gcloud import _init_computer_skip_wait
 
         session = RemoteDesktopSession(
@@ -1213,6 +1214,7 @@ class QemuProvider(Provider):
         snapshot: QemuSnapshotConfig,
         name: str,
         task_id: str,
+        guest_os: str,
         base_qcow2: Path,
         storage_dir: Path,
         exchange_dir: Path,
@@ -1254,8 +1256,21 @@ class QemuProvider(Provider):
             "HV=N",
             "--env",
             "VM_NET_IP=172.30.0.2",
-            snapshot.runner_image,
         ]
+        if guest_os == "linux":
+            run_args.extend(
+                [
+                    "--env",
+                    "ALE_VNC_TARGET=172.30.0.2:5900",
+                    "--env",
+                    "DISPLAY=disabled",
+                    "--env",
+                    "SAMBA=N",
+                    "--env",
+                    "BOOT_MODE=uefi",
+                ]
+            )
+        run_args.append(snapshot.runner_image)
         await _run_docker(*run_args)
 
     @staticmethod

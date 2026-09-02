@@ -45,6 +45,7 @@ _AGENT_FQNS: dict[str, str] = {
     "terminus_2": "ale_run.agents.terminus_2.deployer.Terminus2Deployer",
     "octavus_cli": "ale_run.agents.octavus_cli.deployer.OctavusCliDeployer",
     "dummy": "ale_run.agents.dummy.deployer.DummyDeployer",
+    "scripted_demo": "ale_run.agents.scripted_demo.deployer.ScriptedDemoDeployer",
 }
 
 
@@ -97,7 +98,7 @@ def _config_class_for(deployer_cls: type) -> type:
     return cls
 
 
-def resolve_agent(spec: "AgentSpec") -> tuple[type, type]:
+def resolve_agent(spec: AgentSpec) -> tuple[type, type]:
     """Resolve an AgentSpec to ``(deployer_cls, config_cls)``.
 
     Raises if ``spec.class_`` isn't registered AND isn't an importable FQN.
@@ -167,27 +168,37 @@ def build_config(config_cls: type, raw: dict[str, Any]) -> Any:
 # ----------------------------------------------------------------------
 
 
-def build_provider(spec: "ProviderSpec") -> "Provider":
+def build_provider(spec: ProviderSpec) -> Provider:
     """Build a Provider instance from a ProviderSpec."""
     kind = spec.kind
     if kind == "gcloud":
         from ..environments.providers.gcloud import GcloudProvider
+
         return GcloudProvider(spec.config)
     if kind == "aws":
         from ..environments.providers.aws import AwsProvider
+
         return AwsProvider(spec.config)
     if kind == "aliyun":
         from ..environments.providers.aliyun import AliyunProvider
+
         return AliyunProvider(spec.config)
     if kind == "static":
         from ..environments.providers.static import StaticProvider
+
         return StaticProvider(spec.config)
     if kind == "docker":
         from ..environments.providers.docker import DockerProvider
+
         return DockerProvider(spec.config)
     if kind == "qemu":
         from ..environments.providers.qemu import QemuProvider
+
         return QemuProvider(spec.config)
+    if kind == "proxmox":
+        from ..environments.providers.proxmox import ProxmoxProvider
+
+        return ProxmoxProvider(spec.config)
     raise NotImplementedError(f"provider kind {kind!r} is not implemented")
 
 
@@ -200,11 +211,11 @@ class EnvironmentRouter:
     safely serves all its snapshots concurrently).
     """
 
-    def __init__(self, env: "EnvironmentSpec"):
+    def __init__(self, env: EnvironmentSpec):
         self._env = env
-        self._cache: dict[str, "Provider"] = {}
+        self._cache: dict[str, Provider] = {}
 
-    def provider_for(self, snapshot: str) -> "Provider":
+    def provider_for(self, snapshot: str) -> Provider:
         kind = self._env.kind_for(snapshot)
         if kind not in self._cache:
             self._cache[kind] = build_provider(self._env.provider_specs[kind])

@@ -9,6 +9,8 @@ from ale_run.base_interface import TaskDataSpec
 from ale_run.environments.task_data import baked_in_sandbox
 from ale_run.orchestration.lifecycle import (
     _collect_env_passthrough,
+)
+from ale_run.orchestration.lifecycle import (
     stage_reference as lifecycle_stage_reference,
 )
 
@@ -129,6 +131,7 @@ def test_reference_password_is_not_forwarded_to_agent(
     monkeypatch.setenv("OPENAI_API_KEY", "agent-key")
     monkeypatch.setenv("XAI_API_KEY", "xai-key")
     monkeypatch.setenv("MOONSHOT_API_KEY", "moonshot-key")
+    monkeypatch.setenv("CODEX_AUTH_JSON", '{"auth_mode":"chatgpt"}')
     monkeypatch.setenv(
         baked_in_sandbox.REFERENCE_ARCHIVE_PASSWORD_ENV,
         "host-only-password",
@@ -139,6 +142,7 @@ def test_reference_password_is_not_forwarded_to_agent(
     assert env["OPENAI_API_KEY"] == "agent-key"
     assert env["XAI_API_KEY"] == "xai-key"
     assert env["MOONSHOT_API_KEY"] == "moonshot-key"
+    assert env["CODEX_AUTH_JSON"] == '{"auth_mode":"chatgpt"}'
     assert baked_in_sandbox.REFERENCE_ARCHIVE_PASSWORD_ENV not in env
 
 

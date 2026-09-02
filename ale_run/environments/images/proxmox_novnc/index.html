@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ALE 实时桌面</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #111827; color: #e5e7eb; overflow: hidden; }
+    header {
+      height: 44px; display: flex; align-items: center; gap: 14px;
+      padding: 0 14px; background: #1f2937; border-bottom: 1px solid #374151;
+    }
+    #status { flex: 1; color: #93c5fd; white-space: nowrap; overflow: hidden; }
+    label { display: flex; align-items: center; gap: 6px; }
+    button {
+      border: 1px solid #4b5563; border-radius: 5px; padding: 5px 10px;
+      background: #374151; color: #f9fafb; cursor: pointer;
+    }
+    #screen {
+      width: 100vw; height: calc(100vh - 44px); background: #000;
+      display: flex; align-items: center; justify-content: center;
+    }
+    dialog { border: 1px solid #4b5563; border-radius: 8px; background: #1f2937; color: #e5e7eb; }
+    dialog form { display: grid; gap: 12px; min-width: 280px; }
+    dialog input { padding: 7px; border: 1px solid #6b7280; border-radius: 5px; }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>ALE 实时桌面</strong>
+    <span id="status">正在连接……</span>
+    <label><input id="view-only" type="checkbox">只看不操作</label>
+    <button id="reconnect" type="button">重新连接</button>
+    <button id="fullscreen" type="button">全屏</button>
+  </header>
+  <main id="screen"></main>
+  <dialog id="credentials">
+    <form method="dialog">
+      <strong>需要 VNC 密码</strong>
+      <input id="password" type="password" autocomplete="current-password" placeholder="VNC 密码">
+      <button id="submit-password" value="default">连接</button>
+    </form>
+  </dialog>
+
+  <script type="module">
+    import RFB from "./core/rfb.js";
+
+    const screen = document.querySelector("#screen");
+    const status = document.querySelector("#status");
+    const viewOnly = document.querySelector("#view-only");
+    const credentials = document.querySelector("#credentials");
+    const password = document.querySelector("#password");
+    const values = new URLSearchParams(
+      location.hash.length > 1 ? location.hash.slice(1) : location.search.slice(1),
+    );
+    const token = values.get("token");
+    let rfb = null;
+
+    function connect() {
+      if (!token) {
+        status.textContent = "链接缺少访问 token";
+        return;
+      }
+      if (rfb) rfb.disconnect();
+      status.textContent = "正在连接……";
+      const scheme = location.protocol === "https:" ? "wss" : "ws";
+      const socketUrl = `${scheme}://${location.host}/websockify?token=${encodeURIComponent(token)}`;
+      rfb = new RFB(screen, socketUrl, { shared: true });
+      rfb.scaleViewport = true;
+      rfb.resizeSession = false;
+      rfb.viewOnly = viewOnly.checked;
+      rfb.addEventListener("connect", () => { status.textContent = "已连接"; });
+      rfb.addEventListener("credentialsrequired", () => {
+        if (values.get("vnc_auth") === "token") {
+          status.textContent = "正在认证……";
+          rfb.sendCredentials({ password: token.slice(0, 8) });
+          return;
+        }
+        status.textContent = "等待 VNC 密码";
+        credentials.showModal();
+        password.focus();
+      });
+      rfb.addEventListener("disconnect", (event) => {
+        status.textContent = event.detail.clean ? "连接已关闭" : "连接中断";
+      });
+      rfb.addEventListener("securityfailure", (event) => {
+        status.textContent = `VNC 安全协商失败：${event.detail.reason || "未知原因"}`;
+      });
+    }
+
+    viewOnly.addEventListener("change", () => {
+      if (rfb) rfb.viewOnly = viewOnly.checked;
+    });
+    document.querySelector("#reconnect").addEventListener("click", connect);
+    document.querySelector("#submit-password").addEventListener("click", (event) => {
+      event.preventDefault();
+      if (!rfb || !password.value) return;
+      rfb.sendCredentials({ password: password.value });
+      password.value = "";
+      credentials.close();
+      status.textContent = "正在认证……";
+    });
+    document.querySelector("#fullscreen").addEventListener("click", () => {
+      document.documentElement.requestFullscreen();
+    });
+    connect();
+  </script>
+</body>
+</html>

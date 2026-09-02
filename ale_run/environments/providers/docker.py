@@ -1,12 +1,12 @@
 """DockerProvider — ephemeral Docker containers via ``docker run``.
 
-Each ``acquire`` launches a fresh container from the ale-kasm image,
-maps a random host port to the container's cua-server (port 8000),
-waits for the server to become healthy, and returns a SandboxHandle
-whose ``endpoint`` is ``http://localhost:<host_port>``.
+Each ``acquire`` launches a fresh container from the configured image. The
+default ``bridge`` network maps random host ports to the container's CUA/VNC
+ports. ``host`` network mode is also supported for runtimes such as the Qizhi
+PRoot Docker adapter, where Docker's bridge network and ``-p`` are unavailable.
 
-Concurrent tasks each get their own container + port — no proxy layer
-required. Docker's native port mapping IS the routing mechanism.
+In bridge mode concurrent tasks each get their own container + port — no proxy
+layer is required. Host mode uses fixed image ports and therefore runs serially.
 
 Container naming follows the same ``<prefix>-<task-slug>-<hash8>``
 scheme as GCE VMs for log greppability.
@@ -21,9 +21,9 @@ import random
 import re
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
-from ...base_interface import SandboxSpec, Provider, ReleaseMode, SandboxHandle
+from ...base_interface import Provider, ReleaseMode, SandboxHandle, SandboxSpec
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +75,11 @@ class DockerProviderConfig:
     image_ref   Override the container ref to boot (default: the Image entry's
                 ``docker_image``). Lets one env config pin a specific tag, e.g.
                 a DinD-capable build, without editing the Image registry.
+    network_mode Docker network mode: ``bridge`` (default) publishes the CUA
+                and VNC ports on random host ports; ``host`` passes
+                ``--network host`` and connects directly to the image's fixed
+                CUA port. Host mode requires provider concurrency 1 when every
+                container uses the same fixed ports (as ALE images do).
     """
 
     image: str = "ale-kasm"
@@ -85,12 +90,20 @@ class DockerProviderConfig:
     gcs_sa_key: str = ""
     privileged: bool = False
     image_ref: str = ""
+    network_mode: Literal["bridge", "host"] = "bridge"
     # Start the in-container nested dockerd (DinD) for custom development.
     # The supported rootless-Docker profile excludes nested-runtime tasks and
     # routes them to the QEMU/KVM Ubuntu guest instead. When true the container
     # gets ALE_ENABLE_DIND=1; enabling it broadly can add substantial
     # fuse-overlayfs I/O at high concurrency.
     enable_dind: bool = False
+
+    def __post_init__(self) -> None:
+        if self.network_mode not in {"bridge", "host"}:
+            raise ValueError(
+                "docker.network_mode must be 'bridge' or 'host', got "
+                f"{self.network_mode!r}"
+            )
 
 
 def _build_provider_config(raw: dict[str, Any]) -> DockerProviderConfig:
@@ -110,6 +123,7 @@ def _build_provider_config(raw: dict[str, Any]) -> DockerProviderConfig:
         gcs_sa_key=gcs_sa,
         privileged=bool(raw.get("privileged") or False),
         image_ref=str(raw.get("image_ref") or ""),
+        network_mode=str(raw.get("network_mode") or "bridge").strip().lower(),
         enable_dind=bool(raw.get("enable_dind") or False),
     )
 
@@ -186,7 +200,7 @@ def _sa_key_project_id(host_key_path: str) -> str:
     from pathlib import Path as _P
     try:
         return _json.loads(_P(host_key_path).read_text()).get("project_id", "") or ""
-    except Exception:
+    except (OSError, ValueError, AttributeError, TypeError):
         return ""
 
 
@@ -223,8 +237,15 @@ class DockerProvider(Provider):
         run_args = [
             "run", "-d",
             "--name", name,
-            "-p", f"0:{cua_internal_port}",
-            "-p", f"0:{_VNC_INTERNAL_PORT}",
+        ]
+        if self._cfg.network_mode == "host":
+            run_args.extend(["--network", "host"])
+        else:
+            run_args.extend([
+                "-p", f"0:{cua_internal_port}",
+                "-p", f"0:{_VNC_INTERNAL_PORT}",
+            ])
+        run_args.extend([
             f"--shm-size={self._cfg.shm_size}",
             # Virtual display size for the in-container Xvfb (the entrypoint reads
             # this; falls back to its own default if unset).
@@ -235,7 +256,7 @@ class DockerProvider(Provider):
             # display + cua-server itself. Invoke it explicitly: some images ship
             # a no-op CMD ("sleep infinity") that never would.
             "--entrypoint", image.docker_entrypoint,
-        ]
+        ])
         if self._cfg.privileged:
             # Needed for tasks whose eval runs nested Docker; under rootless
             # docker the privileged container's root is still user-ns-bounded.
@@ -245,7 +266,7 @@ class DockerProvider(Provider):
         # so a Docker sandbox gets the same shape gcloud would give the task. A
         # non-zero cpus / non-empty memory in the provider config overrides the
         # derived value (a host-protection cap under single-host concurrency).
-        from .gcloud import _parse_gce_machine_type, _DEFAULT_CPU_MACHINE
+        from .gcloud import _DEFAULT_CPU_MACHINE, _parse_gce_machine_type
         shape = _parse_gce_machine_type(spec.machine_type or _DEFAULT_CPU_MACHINE)
         cpus = (
             self._cfg.cpus
@@ -269,7 +290,10 @@ class DockerProvider(Provider):
         run_args.append(container_ref)
         run_args.append("--wait")
 
-        logger.info("Creating Docker container %s from %s", name, container_ref)
+        logger.info(
+            "Creating Docker container %s from %s (network=%s)",
+            name, container_ref, self._cfg.network_mode,
+        )
         rc, stdout, stderr = await _run_docker(*run_args)
         if rc != 0:
             raise RuntimeError(
@@ -277,9 +301,17 @@ class DockerProvider(Provider):
             )
         logger.info("Container %s started (id=%s)", name, stdout[:12])
 
-        cua_port = await _get_host_port(name, cua_internal_port)
-        vnc_port = await _get_host_port(name, _VNC_INTERNAL_PORT)
-        cua_url = f"http://localhost:{cua_port}"
+        if self._cfg.network_mode == "host":
+            # Host mode has no NAT mapping to inspect. The container binds in
+            # the launcher's network namespace, which is the supported path on
+            # Qizhi's PRoot Docker adapter.
+            cua_port = cua_internal_port
+            vnc_port = _VNC_INTERNAL_PORT
+            cua_url = f"http://127.0.0.1:{cua_port}"
+        else:
+            cua_port = await _get_host_port(name, cua_internal_port)
+            vnc_port = await _get_host_port(name, _VNC_INTERNAL_PORT)
+            cua_url = f"http://localhost:{cua_port}"
 
         logger.info(
             "Container %s ports: cua=%d vnc=%d",
@@ -316,6 +348,7 @@ class DockerProvider(Provider):
                 "cua_port": cua_port,
                 "vnc_port": vnc_port,
                 "image": self._cfg.image,
+                "network_mode": self._cfg.network_mode,
                 "snapshot": spec.snapshot,
                 "gcs_user_project": gcs_user_project,
             },
@@ -391,6 +424,7 @@ class DockerProvider(Provider):
 
     def open_session(self, sandbox: SandboxHandle) -> Any:
         from cua_bench.computers.remote import RemoteDesktopSession
+
         from .gcloud import _init_computer_skip_wait
 
         session = RemoteDesktopSession(

@@ -36,6 +36,19 @@ echo "Starting ALE QEMU guest from $disk_path"
 echo "noVNC is exposed on container port 8006"
 echo "CUA is expected on guest ${VM_NET_IP:-172.30.0.2}:${ALE_GUEST_CUA_PORT:-5000}"
 
+# Docker's default AppArmor profile blocks nginx socketpair creation. The
+# runner already includes websocketd, which can serve noVNC and bridge its
+# binary WebSocket directly to a VNC server without extra privileges.
+sed -i \
+  "s|^  nginx -e stderr$|  /usr/local/bin/ale-qemu-novnc > /var/log/ale-novnc.log 2>\&1 \&|" \
+  /run/server.sh
+if ! grep -Fq "/usr/local/bin/ale-qemu-novnc" /run/server.sh; then
+  echo "ALE QEMU runner could not configure noVNC server" >&2
+  exit 66
+fi
+
+echo "noVNC bridges to ${ALE_VNC_TARGET:-127.0.0.1:5900}"
+
 # tini becomes PID 1 and forwards signals to the Dockur startup process.
 # Unlike the inherited entrypoint, no detached readiness loop can keep the
 # container alive after QEMU exits.

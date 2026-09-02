@@ -1,0 +1,37 @@
+schema_version: 1
+name: nvdla-bdma-codex-proxmox
+
+repo_root: /data/ale/agents-last-exam
+secret_file: /data/ale/agents-last-exam/secret/.env
+
+task:
+  id: engineering/nvdla_bdma_surface_stride_repair
+  variant: 0
+
+environment:
+  profile: /data/ale/agents-last-exam/configs/environments/proxmox.yaml
+  task_data_source: local:/data/ale/agent_last_exam/tasks
+  output_path: local
+
+agent:
+  harness: codex
+  id: codex-mindwaving
+  executor: sandbox
+  model: gpt-5.6-sol
+  reasoning_effort: high
+  api:
+    provider: mindwaving
+    base_url: https://cdproxy.mindwaving.com:4005/v1
+    api_key_env: MINDWAVING_API_KEY
+  config:
+    sandbox_mode: danger-full-access
+    yolo: true
+    otel_enabled: true
+    capture_session: true
+
+run:
+  output_root: /data/ale/rollouts
+  wall_time_s: 28800
+  cleanup_mode: delete
+  max_attempts: 1
+  prompt_suffix: ""

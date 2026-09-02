@@ -29,19 +29,19 @@ from typing import Any
 from ..base_interface import (
     AgentRunResult,
     BaseExecutor,
-    SandboxSpec,
     Provider,
+    SandboxSpec,
     Trajectory,
     TrajectoryBuilder,
     persist_screenshots,
 )
 from ..environments.env import ALEEnv
 from ..executors import DockerExecutor, LocalExecutor, SandboxExecutor
-from ..tasks.loader import TaskLoader
 from ..tasks.driver import TaskDriver
+from ..tasks.loader import TaskLoader
+from .experiment_spec import ArtifactsSpec, RunUnit, UnitResult
 from .factory import EnvironmentRouter, build_config, resolve_agent
 from .run_writer import RunWriter, slug_task
-from .experiment_spec import ArtifactsSpec, RunUnit, UnitResult
 from .termination import classify_error, err_dict, redact_config
 
 logger = logging.getLogger(__name__)
@@ -126,7 +126,7 @@ def install_signal_handlers() -> None:
 async def run_one_unit(
     *,
     unit: RunUnit,
-    router: "EnvironmentRouter",
+    router: EnvironmentRouter,
     output_root: Path,
     artifacts: ArtifactsSpec | None = None,
     sem: asyncio.Semaphore | None = None,
@@ -145,7 +145,7 @@ async def run_one_unit(
         deployer_cls, config_cls = resolve_agent(unit.agent_spec)
     except Exception as e:
         # We can't even open a RunWriter without knowing the model — bail.
-        logger.exception("resolve_agent failed for %s: %s", unit.slug, e)
+        logger.exception("resolve_agent failed for %s", unit.slug)
         return UnitResult(
             unit=unit,
             status="not_executed",
@@ -332,7 +332,7 @@ async def run_one_unit(
                     ),
                     timeout=timeout_s,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 run_result = AgentRunResult(
                     status="timeout",
                     error=f"agent wall-budget exceeded after {timeout_s}s",
@@ -340,7 +340,7 @@ async def run_one_unit(
                 )
             except asyncio.CancelledError:
                 raise
-            except Exception as launch_exc:
+            except Exception as launch_exc:  # noqa: BLE001
                 import traceback as _tb
                 run_result = AgentRunResult(
                     status="failed",
@@ -353,7 +353,7 @@ async def run_one_unit(
                     stop_event.set()
                     try:
                         reconcile_err = await asyncio.wait_for(tail_task, timeout=120)
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         tail_task.cancel()
                         reconcile_err = "tail reconcile wait timed out"
                     if reconcile_err:
@@ -392,7 +392,7 @@ async def run_one_unit(
                             "bytes": gather_report.bytes,
                         },
                     )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 writer.emit_event(
                     "origin_log_gather_failed",
                     report={"transport": "?", "files": 0, "error": str(e)},
@@ -445,7 +445,7 @@ async def run_one_unit(
                 else:
                     eval_status = "success"
                     score = _extract_score(eval_out)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 eval_duration_s = round(time.monotonic() - eval_start, 4)
                 # Eval ran out of wall-clock — treat as a timeout (not a failure)
                 # so the unit status is "timeout" and resume skips it.
@@ -472,7 +472,7 @@ async def run_one_unit(
                         run_result=run_result,
                         builder=builder,
                     )
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001
                     logger.warning("parse_artifacts failed for %s: %s", unit.slug, e)
                     builder.add_step(
                         source="system",
@@ -495,7 +495,7 @@ async def run_one_unit(
                     n_shots = persist_screenshots(trajectory, writer.run_dir)
                     if n_shots:
                         writer.emit_event("screenshots_persisted", count=n_shots)
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001
                     logger.warning("persist_screenshots failed for %s: %s", unit.slug, e)
                 writer.write_trajectory(trajectory)
 
@@ -561,12 +561,12 @@ async def run_one_unit(
         if task_driver is not None:
             try:
                 await task_driver.close()
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 logger.debug("TaskDriver.close failed: %s", e)
         if env is not None:
             try:
                 await env.close_async(mode=effective_cleanup_mode)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 logger.debug("ALEEnv.close_async failed: %s", e)
 
     # Reported duration = actual execution window (sem-acquired → eval start),
@@ -755,6 +755,7 @@ def _collect_env_passthrough() -> dict[str, str]:
         "FACTORY_API_KEY",
         "CURSOR_AUTH_JSON_PATH",
         "CURSOR_AUTH_JSON",
+        "CODEX_AUTH_JSON",
     )
     result = {k: os.environ[k] for k in keys if k in os.environ}
 
@@ -845,7 +846,7 @@ async def pull_agent_output(
                     bytes=report.get("bytes"),
                     errors=len(report.get("errors") or []),
                 )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.warning("pull_to_host failed (best-effort): %s", e)
             writer.emit_event("output_gather_failed", transport="local", error=str(e))
         return
@@ -861,7 +862,7 @@ async def pull_agent_output(
                 transport="s3",
                 s3_path=report.get("s3_path"),
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.warning("push_to_s3 failed (best-effort): %s", e)
             writer.emit_event("output_gather_failed", transport="s3", error=str(e))
         return
@@ -877,7 +878,7 @@ async def pull_agent_output(
                 transport="oss",
                 oss_path=report.get("oss_path"),
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.warning("push_to_oss failed (best-effort): %s", e)
             writer.emit_event("output_gather_failed", transport="oss", error=str(e))
         return
@@ -899,7 +900,7 @@ async def pull_agent_output(
             transport="gcs",
             gcs_path=report.get("gcs_path"),
         )
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         logger.warning("push_to_gcs failed (best-effort): %s", e)
         writer.emit_event("output_gather_failed", transport="gcs", error=str(e))
 

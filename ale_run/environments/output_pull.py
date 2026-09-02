@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import errno
 import logging
+import os
 import shlex
 import shutil
 from pathlib import Path
@@ -59,14 +60,15 @@ def _docker_container(sandbox: SandboxHandle) -> str | None:
     return sandbox.metadata.get("container_name")
 
 
-def _qemu_exchange(sandbox: SandboxHandle) -> tuple[Path, str] | None:
+def _qemu_exchange(sandbox: SandboxHandle) -> tuple[Path, str, str] | None:
     if sandbox.metadata.get("provider") != "qemu":
         return None
     host_dir = sandbox.metadata.get("exchange_host_dir")
     guest_share = sandbox.metadata.get("exchange_guest_share")
-    if not host_dir or not guest_share:
+    transport = sandbox.metadata.get("exchange_guest_transport")
+    if not host_dir or not guest_share or transport not in {"9p", "smb"}:
         return None
-    return Path(host_dir), str(guest_share)
+    return Path(host_dir), str(guest_share), str(transport)
 
 
 def _count_output_files(dest_dir: Path) -> tuple[int, int]:
@@ -149,13 +151,16 @@ async def _pull_via_qemu_share(
     src: str,
     exchange_dir: Path,
     guest_share: str,
+    transport: str,
     dest_dir: Path,
 ) -> dict[str, Any]:
     staged_dir = exchange_dir / "output"
     if staged_dir.exists():
         await asyncio.to_thread(shutil.rmtree, staged_dir)
 
-    if sandbox.is_linux:
+    if transport == "9p":
+        if not sandbox.is_linux:
+            raise RuntimeError("QEMU 9p output transport requires a Linux guest")
         source = shlex.quote(src)
         share = shlex.quote(guest_share)
         command = (
@@ -165,11 +170,14 @@ async def _pull_via_qemu_share(
             'cleanup() { sudo -n umount "$mount_dir" 2>/dev/null || true; '
             'rmdir "$mount_dir" 2>/dev/null || true; }; '
             "trap cleanup EXIT; "
-            f'sudo -n mount -t cifs {share} "$mount_dir" -o guest,vers=3.0; '
+            f'sudo -n mount -t 9p -o trans=virtio,version=9p2000.L {share} "$mount_dir"; '
             'sudo -n mkdir -p "$mount_dir/output"; '
-            f'sudo -n cp -rL {source}/. "$mount_dir/output/"'
+            f'sudo -n cp -rL {source}/. "$mount_dir/output/"; '
+            f'sudo -n chown -R {os.getuid()}:{os.getgid()} "$mount_dir/output"'
         )
-    else:
+    elif transport == "smb":
+        if sandbox.is_linux:
+            raise RuntimeError("QEMU SMB output transport requires a Windows guest")
         source = src.replace("'", "''")
         destination = f"{guest_share.rstrip('/\\')}\\output".replace("'", "''")
         command = (
@@ -182,6 +190,8 @@ async def _pull_via_qemu_share(
             "if ($LASTEXITCODE -ge 8) { exit $LASTEXITCODE } else { exit 0 }"
             '"'
         )
+    else:
+        raise ValueError(f"unknown QEMU output transport: {transport!r}")
 
     result = await sandbox.run_command(command, timeout=_QEMU_SHARE_COPY_TIMEOUT_S)
     if result.returncode == 44:
@@ -227,9 +237,10 @@ async def pull_to_host(
                 src,
                 exchange[0],
                 exchange[1],
+                exchange[2],
                 dest_dir,
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "QEMU shared output pull failed, falling back to cua: %s",
                 exc,
@@ -246,7 +257,7 @@ async def pull_to_host(
     if container:
         try:
             return await _pull_via_docker_cp(container, src, dest_dir)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.warning("docker cp output pull failed, falling back to cua: %s", e)
 
     dest_dir.mkdir(parents=True, exist_ok=True)

@@ -243,7 +243,7 @@ async def test_acquire_creates_overlay_and_returns_guest_handle(
     assert sandbox.metadata["vcpus"] == 4
     assert sandbox.metadata["memory_gb"] == 8
     assert sandbox.metadata["novnc_url"] == "http://127.0.0.1:18000"
-    assert sandbox.metadata["runner_image"] == "agentslastexam/ale-qemu:0.2.0"
+    assert sandbox.metadata["runner_image"] == "agentslastexam/ale-qemu:0.3.0"
     assert sandbox.metadata["gcs_key_path"] == r"C:\agenthle\gcs-reader.json"
     assert sandbox.metadata["gcs_user_project"] == "test-project"
     assert credential_calls == [
@@ -252,6 +252,7 @@ async def test_acquire_creates_overlay_and_returns_guest_handle(
     exchange_dir = Path(sandbox.metadata["exchange_host_dir"])
     assert exchange_dir.is_dir()
     assert sandbox.metadata["exchange_guest_share"] == r"\\host.lan\Data"
+    assert sandbox.metadata["exchange_guest_transport"] == "smb"
     assert any(
         call[:5] == ("run", "--rm", "--pull=missing", "--entrypoint", "qemu-img")
         for call in docker_calls
@@ -263,7 +264,54 @@ async def test_acquire_creates_overlay_and_returns_guest_handle(
     assert f"type=bind,src={exchange_dir},dst=/shared" in start_call
     assert "RAM_SIZE=8G" in start_call
     assert "CPU_CORES=4" in start_call
-    assert start_call[-1] == "agentslastexam/ale-qemu:0.2.0"
+    assert start_call[-1] == "agentslastexam/ale-qemu:0.3.0"
+
+
+@pytest.mark.asyncio
+async def test_linux_runner_uses_guest_desktop_and_disables_samba(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, ...]] = []
+
+    async def fake_run_docker(
+        *args: str,
+        check: bool = True,
+    ) -> tuple[int, str, str]:
+        _ = check
+        calls.append(args)
+        return (0, "", "")
+
+    monkeypatch.setattr(qemu_module, "_run_docker", fake_run_docker)
+    base_qcow2 = tmp_path / "base.qcow2"
+    storage_dir = tmp_path / "storage"
+    exchange_dir = tmp_path / "exchange"
+    snapshot = qemu_module._build_snapshot_config(
+        {
+            "image": "ale-ubuntu22",
+            "disk_source": str(base_qcow2),
+            "root": str(tmp_path / "qemu"),
+        }
+    )
+
+    await QemuProvider._start_container(
+        snapshot=snapshot,
+        name="ale-qemu-linux-test",
+        task_id="demo/hello",
+        guest_os="linux",
+        base_qcow2=base_qcow2,
+        storage_dir=storage_dir,
+        exchange_dir=exchange_dir,
+        cua_port=5000,
+        vcpus=4,
+        memory_gb=16,
+    )
+
+    start_call = calls[0]
+    assert "ALE_VNC_TARGET=172.30.0.2:5900" in start_call
+    assert "DISPLAY=disabled" in start_call
+    assert "SAMBA=N" in start_call
+    assert "BOOT_MODE=uefi" in start_call
 
 
 @pytest.mark.asyncio
@@ -912,10 +960,10 @@ def test_qemu_outer_container_is_not_guest_filesystem() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("os_type", "guest_share", "expected_command"),
+    ("os_type", "guest_share", "transport", "expected_command"),
     [
-        ("windows", r"\\host.lan\Data", "robocopy"),
-        ("linux", "//172.30.0.1/Data", "mount -t cifs"),
+        ("windows", r"\\host.lan\Data", "smb", "robocopy"),
+        ("linux", "shared", "9p", "mount -t 9p"),
     ],
 )
 async def test_qemu_output_pull_uses_shared_exchange(
@@ -923,6 +971,7 @@ async def test_qemu_output_pull_uses_shared_exchange(
     monkeypatch: pytest.MonkeyPatch,
     os_type: str,
     guest_share: str,
+    transport: str,
     expected_command: str,
 ) -> None:
     exchange_dir = tmp_path / "exchange"
@@ -940,6 +989,7 @@ async def test_qemu_output_pull_uses_shared_exchange(
             "provider": "qemu",
             "exchange_host_dir": str(exchange_dir),
             "exchange_guest_share": guest_share,
+            "exchange_guest_transport": transport,
         },
     )
     commands: list[tuple[str, float]] = []
@@ -979,6 +1029,10 @@ async def test_qemu_output_pull_uses_shared_exchange(
     if os_type == "linux":
         assert 'sudo -n mkdir -p "$mount_dir/output"' in commands[0][0]
         assert "sudo -n cp -rL" in commands[0][0]
+        assert (
+            f"sudo -n chown -R {output_pull.os.getuid()}:{output_pull.os.getgid()}"
+            in commands[0][0]
+        )
     assert commands[0][1] == output_pull._QEMU_SHARE_COPY_TIMEOUT_S
 
 
@@ -1001,7 +1055,8 @@ async def test_qemu_output_pull_falls_back_to_cua(
         metadata={
             "provider": "qemu",
             "exchange_host_dir": str(exchange_dir),
-            "exchange_guest_share": "//172.30.0.1/Data",
+            "exchange_guest_share": "shared",
+            "exchange_guest_transport": "9p",
         },
     )
 

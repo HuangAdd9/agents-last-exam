@@ -18,6 +18,9 @@ snapshots:
     docker:
       shm_size: 2g
       resolution: [1024, 768]
+      # Qizhi/PRoot only: disables -p and uses fixed CUA :5000. Keep rollout
+      # concurrency at 1 because all ALE containers bind the same host ports.
+      # network_mode: host
 task_data_source: local:task-data
 output_path: null
 # output_path: local          # uncomment to fetch each run's output back to the host

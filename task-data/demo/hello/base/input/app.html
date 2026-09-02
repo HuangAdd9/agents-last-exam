@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Acme Code Generator</title>
+  <style>
+    body { margin: 0; background: #f4f6f8; font: 20px sans-serif; color: #17202a; }
+    h1 { position: absolute; left: 280px; top: 105px; margin: 0; }
+    label { position: absolute; left: 300px; top: 195px; }
+    #order { position: absolute; left: 300px; top: 230px; width: 470px; height: 38px; font-size: 20px; }
+    #generate { position: absolute; left: 280px; top: 290px; width: 220px; height: 42px; font-size: 18px; }
+    #result { position: absolute; left: 390px; top: 345px; font: bold 22px monospace; user-select: text; }
+  </style>
+</head>
+<body>
+  <h1>Acme Code Generator</h1>
+  <label for="order">Order ID</label>
+  <input id="order" autocomplete="off" autofocus>
+  <button id="generate" type="button">Generate Code</button>
+  <div id="result"></div>
+  <script>
+    document.getElementById("generate").addEventListener("click", () => {
+      const orderId = document.getElementById("order").value.trim();
+      document.getElementById("result").textContent = orderId
+        ? `CONF-${orderId}-2026`
+        : "ENTER-ORDER-ID";
+    });
+  </script>
+</body>
+</html>

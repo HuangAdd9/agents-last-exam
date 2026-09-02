@@ -410,6 +410,9 @@ _ALIYUN_CRED_KEYS = (
     "region", "security_group", "instance_prefix", "key_name", "ram_role_name",
     "internet_max_bandwidth_out", "system_disk_category", "instance_charge_type",
 )
+_PROXMOX_CONNECTION_KEYS = (
+    "api_url", "token_id", "token_secret", "verify_ssl", "request_timeout_s",
+)
 
 
 def _build_environment_from_path(
@@ -508,6 +511,8 @@ def _build_per_snapshot_env(raw: dict[str, Any], path: str) -> EnvironmentSpec:
     aliyun_creds: dict[str, Any] = {}   # region/sg/ram_role/... (reconciled, last wins)
     docker_cfg: dict[str, Any] | None = None
     qemu_snaps: dict[str, Any] = {}
+    proxmox_snaps: dict[str, Any] = {}
+    proxmox_connection: dict[str, Any] = {}
 
     for tag, entry in snapshots.items():
         if not isinstance(entry, dict):
@@ -566,6 +571,18 @@ def _build_per_snapshot_env(raw: dict[str, Any], path: str) -> EnvironmentSpec:
                     f"required `qemu.disk_source`"
                 )
             qemu_snaps[str(tag)] = {"image": str(image), **knobs}
+        elif kind == "proxmox":
+            for required in ("node", "template_vmid"):
+                if not knobs.get(required):
+                    raise KeyError(
+                        f"environment {path!r}: proxmox snapshot {tag!r} missing "
+                        f"required `proxmox.{required}`"
+                    )
+            proxmox_connection.update(
+                {k: knobs[k] for k in _PROXMOX_CONNECTION_KEYS if k in knobs}
+            )
+            routing = {k: v for k, v in knobs.items() if k not in _PROXMOX_CONNECTION_KEYS}
+            proxmox_snaps[str(tag)] = {"image": str(image), **routing}
         elif kind == "static":
             raise ValueError(
                 f"environment {path!r}: `static` cannot be a per-snapshot "
@@ -619,6 +636,18 @@ def _build_per_snapshot_env(raw: dict[str, Any], path: str) -> EnvironmentSpec:
             kind="qemu",
             config=qemu_cfg,
         )
+    if proxmox_snaps:
+        proxmox_cfg: dict[str, Any] = {
+            **proxmox_connection,
+            "snapshots": proxmox_snaps,
+        }
+        if gcs_sa_key:
+            proxmox_cfg["gcs_sa_key"] = str(Path(str(gcs_sa_key)).expanduser())
+        _validate_provider_required("proxmox", proxmox_cfg, path)
+        provider_specs["proxmox"] = ProviderSpec(
+            kind="proxmox",
+            config=proxmox_cfg,
+        )
 
     return EnvironmentSpec(
         provider_specs=provider_specs,
@@ -653,6 +682,13 @@ def _validate_provider_required(provider: str, cfg: dict[str, Any], path: str = 
     elif provider == "static":
         if not cfg.get("endpoint"):
             raise KeyError(f"environment provider=static missing required field `endpoint`{where}")
+    elif provider == "proxmox":
+        for k in ("api_url", "token_id", "token_secret"):
+            if not cfg.get(k):
+                raise KeyError(
+                    f"environment provider=proxmox missing required field `{k}`{where} "
+                    f"(set it on a proxmox snapshot's `proxmox:` block)"
+                )
 
 
 # ---- tasks ---------------------------------------------------------------

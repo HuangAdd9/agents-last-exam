@@ -1,4 +1,5 @@
 """CLI entry: ``python -m ale run experiments/foo.yaml``."""
+
 from __future__ import annotations
 
 import argparse
@@ -9,6 +10,7 @@ import sys
 from pathlib import Path
 
 import ale_run as ale
+
 from .orchestration import Runner
 from .orchestration.config_loader import load_experiment
 from .orchestration.experiment_spec import RunUnit
@@ -48,6 +50,28 @@ def main(argv: list[str] | None = None) -> int:
     p_list = subparsers.add_parser("list", help="List discoverable tasks.")
     p_list.add_argument("--verbose", "-v", action="store_true")
 
+    p_rollout = subparsers.add_parser(
+        "rollout", help="Validate or run one task from a self-contained rollout yaml."
+    )
+    rollout_subparsers = p_rollout.add_subparsers(dest="rollout_cmd", required=True)
+
+    p_rollout_validate = rollout_subparsers.add_parser(
+        "validate", help="Resolve and validate a rollout without touching a VM."
+    )
+    p_rollout_validate.add_argument("spec_path", type=Path)
+    p_rollout_validate.add_argument("--json", action="store_true", dest="json_output")
+    p_rollout_validate.add_argument("--verbose", "-v", action="store_true")
+
+    p_rollout_run = rollout_subparsers.add_parser(
+        "run", help="Run one validated rollout through the native ALE lifecycle."
+    )
+    p_rollout_run.add_argument("spec_path", type=Path)
+    p_rollout_run.add_argument(
+        "--dry-run", action="store_true", help="Validate and print the plan without touching a VM."
+    )
+    p_rollout_run.add_argument("--json", action="store_true", dest="json_output")
+    p_rollout_run.add_argument("--verbose", "-v", action="store_true")
+
     args = parser.parse_args(argv)
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
@@ -58,6 +82,8 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(_cmd_run(args))
     if args.cmd == "list":
         return _cmd_list(args)
+    if args.cmd == "rollout":
+        return asyncio.run(_cmd_rollout(args))
     return 1
 
 
@@ -106,6 +132,27 @@ def _cmd_list(args: argparse.Namespace) -> int:
     for e in envs:
         print(f"  {e}")
     return 0
+
+
+async def _cmd_rollout(args: argparse.Namespace) -> int:
+    from .rollout import format_plan, load_rollout, run_rollout
+
+    plan = load_rollout(args.spec_path)
+    if args.rollout_cmd == "validate" or args.dry_run:
+        if args.json_output:
+            print(json.dumps(plan.manifest, indent=2, ensure_ascii=False))
+        else:
+            print(format_plan(plan))
+        return 0
+
+    result, summary = await run_rollout(plan)
+    if args.json_output:
+        print(json.dumps(summary, indent=2, ensure_ascii=False))
+    else:
+        _print_results_table([result])
+        if result.run_dir is not None:
+            print(f"\nrun directory: {result.run_dir.resolve()}")
+    return 0 if result.status == "completed" else 1
 
 
 # =============================================================================

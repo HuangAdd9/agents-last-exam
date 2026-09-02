@@ -25,6 +25,7 @@ build/
 .final_logs/
 .temp_repos/
 sample_run/
+/task-data/
 
 # Per-developer experiment configs (workflow notes, model-swap probes).
 # Templates for users live at the top-level example_exp.yaml; anything
