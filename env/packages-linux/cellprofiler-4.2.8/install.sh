@@ -10,10 +10,12 @@
 # "libjvm.so: cannot open shared object file" (a real break the old presence-only
 # `test -x` verify hid).
 set -euo pipefail
-MM=/home/kasm-user/.local/bin/micromamba
+TARGET_HOME="$(getent passwd 1000 | cut -d: -f6)"
+[ -n "$TARGET_HOME" ] || { echo "[pkg cellprofiler-4.2.8] FATAL: uid 1000 has no passwd entry" >&2; exit 1; }
+MM="$TARGET_HOME/.local/bin/micromamba"
 [ -x "$MM" ] || { echo "[pkg cellprofiler-4.2.8] FATAL: micromamba required first" >&2; exit 1; }
 P=/opt/cellprofiler-4.2.8
-export MAMBA_ROOT_PREFIX=/home/kasm-user/.local/share/micromamba
+export MAMBA_ROOT_PREFIX="$TARGET_HOME/.local/share/micromamba"
 if [ ! -x "$P/bin/cellprofiler" ]; then
   "$MM" create -y -p "$P" -c bioconda -c conda-forge cellprofiler=4.2.8.1 "openjdk=11"
   chown -R 1000:0 "$P" 2>/dev/null || true

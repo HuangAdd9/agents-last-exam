@@ -2,11 +2,13 @@
 # AmberTools 23 conda-forge env at /opt/ambertools-23 (AMBERHOME). The task
 # wrapper execs $AMBERHOME/bin/{tleap,MMPBSA.py,antechamber,cpptraj,parmchk2}.
 set -euo pipefail
-MM=/home/kasm-user/.local/bin/micromamba
+TARGET_HOME="$(getent passwd 1000 | cut -d: -f6)"
+[ -n "$TARGET_HOME" ] || { echo "[pkg ambertools-23] FATAL: uid 1000 has no passwd entry" >&2; exit 1; }
+MM="$TARGET_HOME/.local/bin/micromamba"
 [ -x "$MM" ] || { echo "[pkg ambertools-23] FATAL: micromamba required first" >&2; exit 1; }
 P=/opt/ambertools-23
 if [ ! -x "$P/bin/tleap" ]; then
-  export MAMBA_ROOT_PREFIX=/home/kasm-user/.local/share/micromamba
+  export MAMBA_ROOT_PREFIX="$TARGET_HOME/.local/share/micromamba"
   "$MM" create -y -p "$P" -c conda-forge ambertools=23
   chown -R 1000:0 "$P" 2>/dev/null || true
 fi

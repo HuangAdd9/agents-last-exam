@@ -1,0 +1,8 @@
+{
+  "description": "Godot Engine 4.6.2 stable portable runtime",
+  "os": "windows",
+  "provides": ["godot"],
+  "version": "4.6.2",
+  "install_location": "C:\\Softwares\\Godot-4.6.2",
+  "verify": "powershell -NoProfile -Command \"$p='C:\\\\Softwares\\\\Godot-4.6.2\\\\godot.exe'; if((Test-Path $p) -and ((& $p --headless --version 2>&1 | Select-Object -First 1) -like '4.6.2.stable*')){$true}else{throw 'missing or wrong version'}\""
+}

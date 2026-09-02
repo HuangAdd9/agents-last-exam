@@ -2,7 +2,8 @@
 # Sole baked Blender on the free images. Several task evals resolve Blender by
 # "newest installed wins" (uv_reproduction, skeletal_animation_reproduction) and
 # blender_character_reconstruction is calibrated on 5.0.1 (rejects 4.5), so any
-# stray 5.1 / 4.5 install must be removed or those tasks pick the wrong version.
+# stray registered 5.1 / 4.5 installs must be removed or those tasks pick the
+# wrong version. The task-pinned portable C:\Softwares\Blender-4.5.1 is kept.
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
@@ -25,7 +26,7 @@ foreach ($p in @(
     'C:\Program Files\Blender Foundation\Blender 4.5'
 )) { if (Test-Path $p) { Remove-Item $p -Recurse -Force -ErrorAction SilentlyContinue } }
 Get-ChildItem 'C:\Softwares' -Directory -Filter 'Blender-*' -ErrorAction SilentlyContinue |
-    Where-Object { $_.Name -notlike 'Blender-5.0*' } |
+    Where-Object { $_.Name -notlike 'Blender-5.0*' -and $_.Name -ne 'Blender-4.5.1' } |
     ForEach-Object { Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
 
 # --- 2. Install 5.0.1 if not already present ---

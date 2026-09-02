@@ -1,1 +1,1 @@
-{"description": "Nextflow workflow engine (/usr/local/bin/nextflow; requires jdk-default)", "os": "linux", "verify": "nextflow -version"}
+{"description": "Nextflow workflow engine (/usr/local/bin/nextflow; requires jdk-default)", "os": "linux", "verify": "TARGET_HOME=\"$(getent passwd 1000 | cut -d: -f6)\"; test -n \"$TARGET_HOME\" && HOME=\"$TARGET_HOME\" NXF_HOME=\"$TARGET_HOME/.nextflow\" nextflow -version"}

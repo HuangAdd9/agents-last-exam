@@ -2,5 +2,5 @@
   "description": "Microsoft Edge (OS component on Windows Server 2022). Verify-only — no separate download.",
   "os": "windows",
   "provides": ["edge", "msedge"],
-  "verify": "powershell -NoProfile -Command \"$p=@('${env:ProgramFiles(x86)}\\Microsoft\\Edge\\Application\\msedge.exe','${env:ProgramFiles}\\Microsoft\\Edge\\Application\\msedge.exe'); if(-not ($p | Where-Object { Test-Path $_ })){ throw 'missing' }; $true\""
+  "verify": "powershell -NoProfile -Command \"$roots=@([Environment]::GetEnvironmentVariable('ProgramFiles'),[Environment]::GetEnvironmentVariable('ProgramFiles(x86)')) | Where-Object { $_ }; $edge=$roots | ForEach-Object { Join-Path $_ 'Microsoft\\Edge\\Application\\msedge.exe' } | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1; if(-not $edge){ throw 'missing' }; $true\""
 }

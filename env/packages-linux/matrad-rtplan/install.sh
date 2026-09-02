@@ -4,13 +4,15 @@
 # rtplan-matrad octave --path /opt/matrad-c014dc82`.
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
-MM=/home/kasm-user/.local/bin/micromamba
+TARGET_HOME="$(getent passwd 1000 | cut -d: -f6)"
+[ -n "$TARGET_HOME" ] || { echo "[pkg matrad-rtplan] FATAL: uid 1000 has no passwd entry" >&2; exit 1; }
+MM="$TARGET_HOME/.local/bin/micromamba"
 [ -x "$MM" ] || { echo "[pkg matrad-rtplan] FATAL: micromamba required first" >&2; exit 1; }
-export MAMBA_ROOT_PREFIX=/home/kasm-user/.local/share/micromamba
+export MAMBA_ROOT_PREFIX="$TARGET_HOME/.local/share/micromamba"
 if ! "$MM" env list 2>/dev/null | grep -q "rtplan-matrad"; then
   "$MM" create -y -n rtplan-matrad -c conda-forge "octave=6.4" numpy scipy
   chown -R 1000:0 "$MAMBA_ROOT_PREFIX" 2>/dev/null || true
-  mkdir -p /home/kasm-user/.cache/mamba; chown -R 1000:0 /home/kasm-user/.cache 2>/dev/null || true
+  mkdir -p "$TARGET_HOME/.cache/mamba"; chown -R 1000:0 "$TARGET_HOME/.cache" 2>/dev/null || true
 fi
 if [ ! -d /opt/matrad-c014dc82/.git ]; then
   command -v git >/dev/null 2>&1 || { apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*; }

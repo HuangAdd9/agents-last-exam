@@ -1,0 +1,8 @@
+{
+  "description": "Blender 4.5.1 LTS portable runtime for tasks pinned to 4.5.1. Coexists with the canonical Blender 5.0.x MSI installation.",
+  "os": "windows",
+  "provides": ["blender-4.5.1"],
+  "version": "4.5.1",
+  "install_location": "C:\\Softwares\\Blender-4.5.1",
+  "verify": "powershell -NoProfile -Command \"$p='C:\\\\Softwares\\\\Blender-4.5.1\\\\blender.exe'; if((Test-Path $p) -and ((& $p --version 2>&1 | Select-Object -First 1) -like 'Blender 4.5.1*')){$true}else{throw 'missing or wrong version'}\""
+}

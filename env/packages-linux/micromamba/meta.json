@@ -1,1 +1,1 @@
-{"description": "micromamba (conda-forge env manager) at ~/.local/bin", "os": "linux", "verify": "/home/kasm-user/.local/bin/micromamba --version"}
+{"description": "micromamba (conda-forge env manager) at uid 1000's ~/.local/bin", "os": "linux", "verify": "TARGET_HOME=\"$(getent passwd 1000 | cut -d: -f6)\"; test -n \"$TARGET_HOME\" && \"$TARGET_HOME/.local/bin/micromamba\" --version"}
