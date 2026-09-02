@@ -4,9 +4,10 @@
   "summary": "Rebuild a flattened SaaS one-pager as an editable single-slide PowerPoint on Windows, apply the staged NorthstarOS rebrand changes, and export both a PPTX and a PNG.",
   "category": "business_finance",
   "software": [
-    "Microsoft PowerPoint"
+    "Microsoft PowerPoint",
+    "LibreOffice Impress (fallback)"
   ],
-  "taskPrompt": "You are editing a SaaS one-pager on a Windows VM.\n\n## Variant\n`base`: NorthstarOS one-pager brand refresh\n\n## Runtime Entry Point\n- Open PowerPoint from: `base\\software\\OpenPowerPoint.bat`\n\n## Visible Inputs\n- Source one-pager PNG: `base\\input\\original_onepager.png`\n- Edit brief: `base\\input\\edit_request.txt`\n- Brand guide PDF: `base\\input\\brand_guide.pdf`\n- KPI data CSV: `base\\input\\metrics.csv`\n- Chart data CSV: `base\\input\\chart_data.csv`\n- Replacement assets directory: `base\\input\\assets`\n- Task brief: `base\\input\\task_brief.md`\n- Output contract: `base\\input\\output_contract.json`\n\n## What You Must Do\n1. Read the staged brief and input files.\n2. Rebuild the one-pager as a meaningfully editable single-slide PowerPoint.\n3. Apply the requested NorthstarOS brand refresh while preserving the overall composition.\n4. Save the editable PowerPoint exactly to `base\\output\\edited_onepager.pptx`.\n5. Export the final slide exactly to `base\\output\\edited_onepager.png`.\n\n## Output Requirements\n- The `.pptx` must remain meaningfully editable.\n- Save only the final required deliverables inside `base\\output`.\n- Do not modify files under `input/`.\n",
+  "taskPrompt": "You are editing a SaaS one-pager on a Windows VM.\n\n## Variant\n`base`: NorthstarOS one-pager brand refresh\n\n## Runtime Entry Point\n- Open the available presentation editor from: `base\\software\\OpenPowerPoint.bat`\n- The launcher prefers 64-bit PowerPoint, then 32-bit PowerPoint, and falls back to LibreOffice Impress.\n\n## Visible Inputs\n- Source one-pager PNG: `base\\input\\original_onepager.png`\n- Edit brief: `base\\input\\edit_request.txt`\n- Brand guide PDF: `base\\input\\brand_guide.pdf`\n- KPI data CSV: `base\\input\\metrics.csv`\n- Chart data CSV: `base\\input\\chart_data.csv`\n- Replacement assets directory: `base\\input\\assets`\n- Task brief: `base\\input\\task_brief.md`\n- Output contract: `base\\input\\output_contract.json`\n\n## What You Must Do\n1. Read the staged brief and input files.\n2. Rebuild the one-pager as a meaningfully editable single-slide PowerPoint.\n3. Apply the requested NorthstarOS brand refresh while preserving the overall composition.\n4. Save the editable PowerPoint exactly to `base\\output\\edited_onepager.pptx`.\n5. Export the final slide exactly to `base\\output\\edited_onepager.png`.\n\n## Output Requirements\n- The `.pptx` must remain meaningfully editable.\n- Save only the final required deliverables inside `base\\output`.\n- Do not modify files under `input/`.\n",
   "agentMustDo": [
     "Read the staged source one-pager, edit brief, brand guide, KPI CSV, chart CSV, and asset bundle from `input/`.",
     "Rebuild the page as a meaningfully editable single-slide PowerPoint on Windows.",
@@ -101,5 +102,7 @@
       }
     }
   },
-  "requiredSystemPackages": []
+  "requiredSystemPackages": [
+    "libreoffice-25.2.7.2"
+  ]
 }

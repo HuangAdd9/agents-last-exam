@@ -92,5 +92,9 @@
       },
       "rationale": "The task involves level design and navigation in a game environment, which fits within 3D animation and interactive media."
     }
-  }
+  },
+  "requiredSystemPackages": [
+    "blender-4.5.1",
+    "godot-4.6.2"
+  ]
 }

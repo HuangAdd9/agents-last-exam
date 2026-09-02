@@ -1,0 +1,81 @@
+{
+  "taskId": "engineering/nvdla_bdma_source_switch_repair",
+  "title": "NVDLA BDMA Source-Memory Switch RTL Repair",
+  "taskName": "NVDLA BDMA Source-Memory Switch RTL Repair",
+  "summary": "Diagnose and repair a command-pipeline defect that prevents NVDLA BDMA batches from completing when consecutive commands switch source memory.",
+  "category": "engineering",
+  "software": [
+    "NVDLA hardware nvdlav1",
+    "Verilator 3.912",
+    "Docker",
+    "GNU Make"
+  ],
+  "tags": [
+    "eda",
+    "rtl",
+    "verilog",
+    "nvdla",
+    "bdma",
+    "hardware-debugging",
+    "pipeline-control"
+  ],
+  "taskPrompt": "Repair the staged NVDLA BDMA RTL so batches of consecutive commands complete correctly when the source memory changes between MC and CVSRAM. Work only in the writable vmod/nvdla/bdma source directory, build with the native NVDLA tmake flow inside the prepared task container, and preserve ordinary same-source command pipelining.",
+  "agentMustDo": [
+    "Read the staged task brief and inspect the writable BDMA RTL source.",
+    "Reproduce the public mixed-source command-chain hang with the native NVDLA Verilator target and a bounded per-run timeout.",
+    "Repair the defect only in vmod/nvdla/bdma RTL source files.",
+    "Run relevant public and regression traces and record the diagnosis in JOURNAL.md."
+  ],
+  "inputFiles": [
+    {
+      "name": "task_instructions.md",
+      "format": "Markdown",
+      "path": "input/task_instructions.md",
+      "description": "Task scope, native build commands, public symptom, and submission requirements."
+    },
+    {
+      "name": "public_tests",
+      "format": "NVDLA traceplayer directories",
+      "path": "input/public_tests",
+      "description": "One passing same-source command chain and one mixed-source chain that fails to complete."
+    }
+  ],
+  "referenceFiles": [
+    {
+      "name": "BDMA RTL source",
+      "format": "Verilog source directory",
+      "path": "output/workspace/vmod/nvdla/bdma",
+      "description": "Submitted writable BDMA RTL overlaid on a clean NVDLA seed during evaluation."
+    },
+    {
+      "name": "JOURNAL.md",
+      "format": "Markdown",
+      "path": "output/JOURNAL.md",
+      "description": "Concise diagnosis, edit summary, and tests run."
+    }
+  ],
+  "evaluation": "The evaluator discards the agent's task container, overlays the submitted BDMA RTL directory on a clean pinned NVDLA seed, performs a clean Verilator rebuild, and runs deterministic command chains with independent per-case timeouts. A successful clean build is required but earns no standalone credit. Same-source command-pipeline regression behavior contributes 5%, and MC/CVSRAM source-switch behavior contributes 95%.",
+  "vm": {
+    "machineType": "n2-highmem-4",
+    "snapshot": "nvdla-ubuntu",
+    "os": "linux",
+    "project": "sunblaze-4",
+    "zone": "us-west2-a",
+    "name": "agenthle-ubuntu",
+    "timeout": 28800
+  },
+  "variants": [
+    "base"
+  ],
+  "taxonomy": {
+    "domain_id": "1",
+    "domain_code": "engineering",
+    "subdomain_id": "1.8",
+    "subdomain_code": "semiconductor",
+    "subdomain_name": "Semiconductor & Microelectronics Design"
+  },
+  "requiredSystemPackages": [
+    "docker-ce",
+    "ale/task-nvdla-bdma-source-switch:8e06b1b9-v1"
+  ]
+}

@@ -39,7 +39,6 @@ except ModuleNotFoundError:  # pragma: no cover - local fallback only
 from tasks.common_setup import BaseTaskSetup
 from tasks.linux_runtime import LinuxTaskConfig
 
-
 _setup = BaseTaskSetup()
 
 logger = logging.getLogger(__name__)
@@ -125,13 +124,27 @@ async def _run_verifier_background(
     stdout_log = f"{run_dir}/verifier.stdout"
     stderr_log = f"{run_dir}/verifier.stderr"
     rc_file = f"{run_dir}/verifier.rc"
+    pid_file = f"{run_dir}/verifier.pid"
+    launcher_script = f"{run_dir}/run_verifier.sh"
+    unit_name = (
+        f"ale-{TASK_NAME.replace('_', '-')}-"
+        f"{posixpath.basename(run_dir).replace('_', '-')}"
+    )
     verifier_command = " ".join(command_parts)
-    wrapped_command = (
-        f"{verifier_command} > {shlex.quote(stdout_log)} 2> {shlex.quote(stderr_log)}; "
-        f"rc=$?; printf '%s\\n' \"$rc\" > {shlex.quote(rc_file)}"
+    await session.write_file(
+        launcher_script,
+        "#!/usr/bin/env bash\n"
+        f"printf '%s\\n' \"$$\" > {shlex.quote(pid_file)}\n"
+        f"{verifier_command} > {shlex.quote(stdout_log)} 2> {shlex.quote(stderr_log)}\n"
+        "rc=$?\n"
+        f"printf '%s\\n' \"$rc\" > {shlex.quote(rc_file)}\n",
     )
     launch_command = "bash -lc " + json.dumps(
-        f"nohup bash -lc {shlex.quote(wrapped_command)} >/dev/null 2>&1 & echo $!"
+        f"sudo -n systemd-run --quiet --collect --unit={shlex.quote(unit_name)} "
+        f"--uid=user --gid=user /bin/bash {shlex.quote(launcher_script)} || exit 1; "
+        f"for _ in {' '.join(str(index) for index in range(50))}; do "
+        f"test -s {shlex.quote(pid_file)} && cat {shlex.quote(pid_file)} && exit 0; "
+        f"sleep 0.1; done; exit 1"
     )
     launch = await _run_command(session, launch_command, check=False)
     if launch.get("return_code") != 0:
@@ -140,7 +153,13 @@ async def _run_verifier_background(
             f"stdout={launch.get('stdout')} stderr={launch.get('stderr')}"
         )
     pid = (launch.get("stdout") or "").strip().splitlines()[-1] if launch.get("stdout") else ""
-    logger.info("[%s] verifier started in background pid=%s run_dir=%s", tag, pid or "unknown", run_dir)
+    logger.info(
+        "[%s] verifier started in background pid=%s unit=%s run_dir=%s",
+        tag,
+        pid or "unknown",
+        unit_name,
+        run_dir,
+    )
 
     waited = 0
     while waited < VERIFIER_TIMEOUT_S:
@@ -171,8 +190,11 @@ async def _run_verifier_background(
             )
             return await _read_remote_tail(session, stdout_log, lines=400), stderr_tail
 
-    if pid.isdigit():
-        await _run_command(session, f"kill {pid} 2>/dev/null || true", check=False)
+    await _run_command(
+        session,
+        f"sudo -n systemctl stop {shlex.quote(unit_name)}.service 2>/dev/null || true",
+        check=False,
+    )
     raise TimeoutError(f"verifier timed out after {VERIFIER_TIMEOUT_S}s; logs under {run_dir}")
 
 
@@ -305,8 +327,9 @@ async def evaluate(task_cfg, session: cb.DesktopSession) -> list[float]:
     ]
     missing_reference = [path for path in required_reference if not (await session.file_exists(path) or await session.directory_exists(path))]
     if missing_reference:
-        logger.error("[%s] missing evaluator reference paths: %s", tag, missing_reference)
-        return [0.0]
+        message = f"missing evaluator reference paths: {missing_reference}"
+        logger.error("[%s] %s", tag, message)
+        raise RuntimeError(message)
 
     if not (await session.file_exists(meta["remote_output_dir"]) or await session.directory_exists(meta["remote_output_dir"])):
         logger.error("[%s] missing submission directory: %s", tag, meta["remote_output_dir"])
@@ -319,17 +342,18 @@ async def evaluate(task_cfg, session: cb.DesktopSession) -> list[float]:
         check=False,
     )
     if run_dir_result.get("return_code") != 0:
-        logger.error(
-            "[%s] failed to create verifier run dir: stdout=%s stderr=%s",
-            tag,
-            run_dir_result.get("stdout", ""),
-            run_dir_result.get("stderr", ""),
+        message = (
+            "failed to create verifier run dir: "
+            f"stdout={run_dir_result.get('stdout', '')} "
+            f"stderr={run_dir_result.get('stderr', '')}"
         )
-        return [0.0]
+        logger.error("[%s] %s", tag, message)
+        raise RuntimeError(message)
     run_dir = (run_dir_result.get("stdout") or "").strip().splitlines()[-1]
     if not run_dir:
-        logger.error("[%s] failed to create verifier run dir: empty mktemp output", tag)
-        return [0.0]
+        message = "failed to create verifier run dir: empty mktemp output"
+        logger.error("[%s] %s", tag, message)
+        raise RuntimeError(message)
 
     verifier_path = f"{run_dir}/verify_submission.py"
     await session.write_file(verifier_path, _read_script("verify_submission.py"))
@@ -359,7 +383,7 @@ async def evaluate(task_cfg, session: cb.DesktopSession) -> list[float]:
         )
     except Exception as exc:
         logger.error("[%s] verifier execution failed: %s", tag, exc)
-        return [0.0]
+        raise
 
     try:
         payload = _parse_json_stdout(stdout)
@@ -371,7 +395,7 @@ async def evaluate(task_cfg, session: cb.DesktopSession) -> list[float]:
             stdout[:2000],
             stderr[:2000],
         )
-        return [0.0]
+        raise RuntimeError("verifier returned invalid JSON output") from exc
 
     normalized_score = float(payload.get("normalized_score", 0.0))
     total_score = float(payload.get("total_score", 0.0))
