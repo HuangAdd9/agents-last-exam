@@ -73,6 +73,9 @@ Config fields (standalone dataclass):
 | `codex_version` | str | `"0.114.0"` | NPM package version to install |
 | `patched_binary_url` | str | `""` | GitHub Release URL for patched Linux native binary (`codex`, musl x86-64) |
 | `patched_binary_url_windows` | str | `""` | GitHub Release URL for patched Windows binary (`codex.exe`, windows-msvc); used instead of `patched_binary_url` on Windows |
+| `rate_limit_resume_retries` | int | `4` | Resume the same Codex session after a terminal HTTP 429 |
+| `rate_limit_backoff_base_s` | float | `30.0` | Initial delay before a 429 resume |
+| `rate_limit_backoff_max_s` | float | `240.0` | Maximum exponential-backoff delay |
 
 ## Logs
 
@@ -82,6 +85,13 @@ Codex `--json` outputs NDJSON with event types:
 - `item.started` / `item.completed` -- tool calls, messages, reasoning
 - `error` -- critical failures
 
+The Codex CLI's `--json` stream does not expose opaque Responses reasoning
+items. When `capture_session` is enabled (the default), the deployer copies the
+matching `~/.codex/sessions/<date>/*.jsonl` file into
+`origin_log/codex/codex_session/` after the child exits. This preserves
+`encrypted_content` for replay/audit without attempting to decrypt or project
+it into `trajectory.json`.
+
 Item types: `agent_message`, `reasoning`, `command_execution`,
 `mcp_tool_call`, `file_change`, `web_search`, `error`.
 
@@ -90,6 +100,8 @@ Item types: `agent_message`, `reasoning`, `command_execution`,
 - CLI: `codex exec --model <model> --json --dangerously-bypass-approvals-and-sandbox`
 - Process: detached via `setsid` (Linux) / `Start-Process` (Windows)
 - Polling: every 2s via Popen.poll()
+- Rate limiting: after Codex exhausts its internal retries, resume the same
+  session in the same VM up to four times after 30, 60, 120, and 240 seconds
 - Timeout: terminates process, then kills after grace period
 - Exit code: nonzero -> `status: "failed"`
 

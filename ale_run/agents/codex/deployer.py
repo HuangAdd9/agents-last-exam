@@ -10,7 +10,8 @@ adaptation (see CodexConfig).
 OpenRouter routing: ``OPENROUTER_API_KEY`` + ``config.toml`` with
 ``model_provider = "openrouter"`` and a custom model_providers block. Direct
 routing: ``OPENAI_API_KEY`` → ``CODEX_API_KEY`` (non-default models via a supplied
-model catalog).
+model catalog). ChatGPT routing writes a transient OAuth ``auth.json`` into an
+isolated run-level ``CODEX_HOME``.
 
 MCP config at ``~/.codex/config.toml``.  Headless via
 ``--dangerously-bypass-approvals-and-sandbox`` (yolo) or
@@ -84,6 +85,8 @@ class CodexDeployer(BaseAgentDeployer):
         "stderr.log",
         "otel_requests.jsonl",
     )
+
+    _SESSION_ARTIFACT_DIR: ClassVar[str] = "codex_session"
 
     # NPM stock fallback version (only relevant when nothing is on PATH and the
     # fork overlay is then applied on top). Last-resort value for ``version``.
@@ -324,7 +327,7 @@ class CodexDeployer(BaseAgentDeployer):
                             "codex: could not replace %s (rc=%d): %s",
                             vp, proc.returncode, (proc.stderr or "")[:200],
                         )
-                except Exception as exc:
+                except (OSError, subprocess.SubprocessError) as exc:
                     logger.warning("codex: error replacing %s: %s", vp, exc)
 
             if replaced == 0:
@@ -344,7 +347,7 @@ class CodexDeployer(BaseAgentDeployer):
         *,
         otel_endpoint: str | None = None,
     ) -> None:
-        """Write ~/.codex/config.toml with MCP server + provider config."""
+        """Write the run's Codex config with MCP server + provider routing."""
         sandbox = self.executor.sandbox
 
         node_exe = sandbox.node
@@ -375,7 +378,12 @@ class CodexDeployer(BaseAgentDeployer):
         # AbsolutePathBuf). The content travelled here in the serialized config
         # (cfg.model_catalog_content), already sanitised host-side.
         home = os.path.expanduser("~")
-        codex_config_dir = os.path.join(home, ".codex")
+        if cfg.provider == "chatgpt":
+            run_name = Path(self.executor.work_dir.replace("\\", "/")).name
+            codex_config_dir = os.path.join(home, ".ale", "codex-account", run_name)
+        else:
+            codex_config_dir = os.path.join(home, ".codex")
+        self._codex_home = codex_config_dir
         os.makedirs(codex_config_dir, exist_ok=True)
         if cfg.model_catalog_content:
             catalog_path = os.path.join(codex_config_dir, "model_catalog.json")
@@ -491,48 +499,134 @@ class CodexDeployer(BaseAgentDeployer):
                 capture_output=True, cwd=str(wd), timeout=15,
             )
 
-        argv = self._build_argv(cfg)
-        env = self._build_env(cfg)
+        windows_job: int | None = None
+        proc: subprocess.Popen | None = None
+        t0 = time.monotonic()
 
         try:
+            if cfg.provider == "chatgpt":
+                self._write_chatgpt_auth()
+            env = self._build_env(cfg)
             if collector is not None:
                 collector.start()
                 await self._write_codex_config(cfg, otel_endpoint=collector.endpoint)
                 logger.info("codex: OTel collector listening at %s", collector.endpoint)
 
-            t0 = time.monotonic()
-            with open(prompt_file, "rb") as pin, \
-                 open(transcript_file, "wb") as tout, \
-                 open(stderr_log, "wb") as terr:
-                proc = await asyncio.to_thread(
-                    subprocess.Popen,
-                    argv,
-                    stdin=pin,
-                    stdout=tout,
-                    stderr=terr,
-                    env=env,
-                    cwd=str(wd),
-                    start_new_session=True if hasattr(os, "setsid") else False,
+            resume_prompt_file = wd / "rate_limit_resume_prompt.txt"
+            resume_attempt = 0
+            thread_id: str | None = None
+            while True:
+                is_resume = resume_attempt > 0
+                argv = (
+                    self._build_resume_argv(cfg, thread_id)
+                    if is_resume and thread_id
+                    else self._build_argv(cfg)
                 )
-            pid_file.write_text(str(proc.pid), encoding="ascii")
-            logger.info("codex: spawned pid=%s", proc.pid)
+                input_file = resume_prompt_file if is_resume else prompt_file
+                output_mode = "ab" if is_resume else "wb"
+                transcript_offset = (
+                    transcript_file.stat().st_size if transcript_file.exists() else 0
+                )
+                stderr_offset = stderr_log.stat().st_size if stderr_log.exists() else 0
 
-            try:
-                while proc.poll() is None:
-                    await asyncio.sleep(_POLL_INTERVAL_S)
-            except asyncio.CancelledError:
-                self._terminate_proc_group(proc, force=False)
-                try:
-                    await asyncio.wait_for(
-                        asyncio.to_thread(proc.wait), timeout=_TERM_GRACE_S,
+                with (
+                    open(input_file, "rb") as pin,  # noqa: ASYNC230
+                    open(transcript_file, output_mode) as tout,  # noqa: ASYNC230
+                    open(stderr_log, output_mode) as terr,  # noqa: ASYNC230
+                ):
+                    proc = await asyncio.to_thread(
+                        subprocess.Popen,
+                        argv,
+                        stdin=pin,
+                        stdout=tout,
+                        stderr=terr,
+                        env=env,
+                        cwd=str(wd),
+                        start_new_session=hasattr(os, "setsid"),
                     )
-                except (asyncio.TimeoutError, asyncio.CancelledError):
-                    self._terminate_proc_group(proc, force=True)
-                raise
-        finally:
-            if collector is not None:
-                collector.stop()
+                windows_job = self._assign_windows_kill_job(proc)
+                pid_file.write_text(str(proc.pid), encoding="ascii")
+                logger.info(
+                    "codex: spawned pid=%s%s",
+                    proc.pid,
+                    f" (rate-limit resume {resume_attempt})" if is_resume else "",
+                )
 
+                try:
+                    while proc.poll() is None:
+                        await asyncio.sleep(_POLL_INTERVAL_S)
+                except asyncio.CancelledError:
+                    self._terminate_proc_group(proc, force=False)
+                    try:
+                        await asyncio.wait_for(
+                            asyncio.to_thread(proc.wait), timeout=_TERM_GRACE_S,
+                        )
+                    except (TimeoutError, asyncio.CancelledError):
+                        self._terminate_proc_group(proc, force=True)
+                    raise
+                finally:
+                    self._close_windows_job(windows_job)
+                    windows_job = None
+
+                if proc.returncode == 0 or resume_attempt >= cfg.rate_limit_resume_retries:
+                    break
+                if not (
+                    self._has_rate_limit_error(transcript_file, transcript_offset)
+                    or self._has_rate_limit_error(stderr_log, stderr_offset)
+                ):
+                    break
+                thread_id = thread_id or self._read_thread_id(transcript_file)
+                if not thread_id:
+                    logger.warning(
+                        "codex: cannot resume after 429 because thread.started is missing"
+                    )
+                    break
+
+                delay_s = min(
+                    cfg.rate_limit_backoff_base_s * (2**resume_attempt),
+                    cfg.rate_limit_backoff_max_s,
+                )
+                resume_attempt += 1
+                resume_prompt_file.write_text(
+                    "The previous turn was interrupted by a transient HTTP 429. "
+                    "Continue the original task from the current workspace state. "
+                    "Do not restart completed work.\n",
+                    encoding="utf-8",
+                )
+                logger.warning(
+                    "codex: HTTP 429 after internal retries; resuming thread %s "
+                    "in %.1fs (attempt %d/%d)",
+                    thread_id,
+                    delay_s,
+                    resume_attempt,
+                    cfg.rate_limit_resume_retries,
+                )
+                await asyncio.sleep(delay_s)
+        finally:
+            # On Windows, closing a kill-on-close Job Object terminates any
+            # shell/KiCad children that survived Codex or a shell timeout.
+            # Do this before telemetry finalization so leaked GUI/tool
+            # processes cannot starve the collector's final allocations.
+            self._close_windows_job(windows_job)
+            try:
+                if collector is not None:
+                    collector.stop()
+            finally:
+                # Codex keeps the Responses reasoning items in its own session
+                # JSONL (including encrypted_content).  The --json stdout
+                # stream intentionally omits those opaque items, so snapshot
+                # the matching session before the VM is torn down.  This is
+                # best-effort and never changes the agent result.
+                if getattr(cfg, "capture_session", True):
+                    try:
+                        self._capture_codex_session(wd, transcript_file)
+                    except (OSError, ValueError, TypeError) as exc:
+                        logger.warning("codex: session capture failed: %s", exc)
+                if cfg.provider == "chatgpt":
+                    self._remove_chatgpt_auth()
+
+        if proc is None:
+            raise RuntimeError("codex: process did not start")
         duration_s = time.monotonic() - t0
         exit_code = proc.returncode
         status = "completed" if exit_code == 0 else "failed"
@@ -573,6 +667,122 @@ class CodexDeployer(BaseAgentDeployer):
         except (ProcessLookupError, OSError):
             pass
 
+    @staticmethod
+    def _assign_windows_kill_job(proc: subprocess.Popen) -> int | None:
+        """Assign Codex to a Windows Job Object that kills surviving children.
+
+        Native Codex shell timeouts can end the outer PowerShell while leaving
+        heavyweight descendants such as KiCad's embedded Python alive.  Job
+        membership is inherited by descendants, including processes that later
+        become orphaned, so closing this handle at rollout teardown reliably
+        reaps the entire harness tree.  Failure is non-fatal for compatibility
+        with Windows hosts whose parent job forbids nested jobs.
+        """
+        if os.name != "nt":
+            return None
+
+        import ctypes
+        from ctypes import wintypes
+
+        class IoCounters(ctypes.Structure):
+            _fields_ = [
+                ("ReadOperationCount", ctypes.c_ulonglong),
+                ("WriteOperationCount", ctypes.c_ulonglong),
+                ("OtherOperationCount", ctypes.c_ulonglong),
+                ("ReadTransferCount", ctypes.c_ulonglong),
+                ("WriteTransferCount", ctypes.c_ulonglong),
+                ("OtherTransferCount", ctypes.c_ulonglong),
+            ]
+
+        class BasicLimitInformation(ctypes.Structure):
+            _fields_ = [
+                ("PerProcessUserTimeLimit", ctypes.c_longlong),
+                ("PerJobUserTimeLimit", ctypes.c_longlong),
+                ("LimitFlags", wintypes.DWORD),
+                ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t),
+                ("ActiveProcessLimit", wintypes.DWORD),
+                ("Affinity", ctypes.c_size_t),
+                ("PriorityClass", wintypes.DWORD),
+                ("SchedulingClass", wintypes.DWORD),
+            ]
+
+        class ExtendedLimitInformation(ctypes.Structure):
+            _fields_ = [
+                ("BasicLimitInformation", BasicLimitInformation),
+                ("IoInfo", IoCounters),
+                ("ProcessMemoryLimit", ctypes.c_size_t),
+                ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                ("PeakJobMemoryUsed", ctypes.c_size_t),
+            ]
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
+        kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+        kernel32.SetInformationJobObject.argtypes = [
+            wintypes.HANDLE,
+            ctypes.c_int,
+            wintypes.LPVOID,
+            wintypes.DWORD,
+        ]
+        kernel32.SetInformationJobObject.restype = wintypes.BOOL
+        kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+        kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+
+        handle = kernel32.CreateJobObjectW(None, None)
+        if not handle:
+            logger.warning(
+                "codex: CreateJobObjectW failed: winerror=%s", ctypes.get_last_error(),
+            )
+            return None
+
+        info = ExtendedLimitInformation()
+        info.BasicLimitInformation.LimitFlags = 0x00002000  # KILL_ON_JOB_CLOSE
+        if not kernel32.SetInformationJobObject(
+            handle, 9, ctypes.byref(info), ctypes.sizeof(info),
+        ):
+            error = ctypes.get_last_error()
+            kernel32.CloseHandle(handle)
+            logger.warning(
+                "codex: SetInformationJobObject failed: winerror=%s", error,
+            )
+            return None
+
+        process_handle = wintypes.HANDLE(int(proc._handle))  # type: ignore[attr-defined]
+        if not kernel32.AssignProcessToJobObject(handle, process_handle):
+            error = ctypes.get_last_error()
+            kernel32.CloseHandle(handle)
+            logger.warning(
+                "codex: AssignProcessToJobObject failed for pid=%s: winerror=%s",
+                proc.pid,
+                error,
+            )
+            return None
+        logger.info("codex: Windows kill-on-close job assigned to pid=%s", proc.pid)
+        return int(handle)
+
+    @staticmethod
+    def _close_windows_job(handle: int | None) -> None:
+        if handle is None or os.name != "nt":
+            return
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+            kernel32.CloseHandle.restype = wintypes.BOOL
+            if not kernel32.CloseHandle(wintypes.HANDLE(handle)):
+                logger.warning(
+                    "codex: CloseHandle(job) failed: winerror=%s",
+                    ctypes.get_last_error(),
+                )
+        except (AttributeError, OSError, ValueError) as exc:
+            logger.warning("codex: failed to close Windows job: %s", exc)
+
     # =========================================================================
     # internals
     # =========================================================================
@@ -599,6 +809,107 @@ class CodexDeployer(BaseAgentDeployer):
         else:
             argv += ["--full-auto", "--sandbox", cfg.sandbox_mode]
         return argv
+
+    def _build_resume_argv(self, cfg: CodexConfig, thread_id: str) -> list[str]:
+        """Build a non-interactive command that continues an existing session."""
+        argv = [
+            self._codex_path,
+            "exec",
+            "resume",
+            "--model",
+            cfg.model,
+            "--json",
+        ]
+        if cfg.yolo:
+            argv.append("--dangerously-bypass-approvals-and-sandbox")
+        else:
+            argv += [
+                "-c",
+                'approval_policy="never"',
+                "-c",
+                f'sandbox_mode="{cfg.sandbox_mode}"',
+            ]
+        argv += [thread_id, "-"]
+        return argv
+
+    @staticmethod
+    def _read_thread_id(transcript_file: Path) -> str | None:
+        if not transcript_file.exists():
+            return None
+        with transcript_file.open(encoding="utf-8", errors="replace") as stream:
+            for line in stream:
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if event.get("type") != "thread.started":
+                    continue
+                thread_id = event.get("thread_id") or event.get("session_id")
+                if thread_id:
+                    return str(thread_id)
+        return None
+
+    @staticmethod
+    def _has_rate_limit_error(path: Path, start_offset: int) -> bool:
+        if not path.exists():
+            return False
+        end_offset = path.stat().st_size
+        with path.open("rb") as stream:
+            stream.seek(max(start_offset, end_offset - 256 * 1024))
+            tail = stream.read().lower()
+        return any(
+            marker in tail
+            for marker in (
+                b"last status: 429",
+                b"429 too many requests",
+                b"http 429",
+                b"status_code=429",
+                b'"http_status":429',
+                b"too many requests",
+                b"rate limit",
+                b"rate_limited",
+                b"ratelimit",
+            )
+        )
+
+    def _write_chatgpt_auth(self) -> None:
+        auth_content = (self.executor.env or {}).get("CODEX_AUTH_JSON", "").strip()
+        if not auth_content:
+            auth_content = os.environ.get("CODEX_AUTH_JSON", "").strip()
+        if not auth_content:
+            raise RuntimeError(
+                "codex: provider=chatgpt but CODEX_AUTH_JSON is not set"
+            )
+        try:
+            payload = json.loads(auth_content)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("codex: CODEX_AUTH_JSON is invalid JSON") from exc
+        if not isinstance(payload, dict) or not payload:
+            raise RuntimeError("codex: CODEX_AUTH_JSON is empty or invalid")
+
+        codex_home_raw = str(getattr(self, "_codex_home", "")).strip()
+        if not codex_home_raw:
+            raise RuntimeError("codex: isolated CODEX_HOME was not initialized")
+        codex_home = Path(codex_home_raw)
+        codex_home.mkdir(parents=True, exist_ok=True)
+        auth_path = codex_home / "auth.json"
+        auth_path.write_text(auth_content, encoding="utf-8")
+        try:
+            auth_path.chmod(0o600)
+        except OSError:
+            pass
+        self._chatgpt_auth_path = auth_path
+        logger.info("codex: transient ChatGPT auth written to isolated CODEX_HOME")
+
+    def _remove_chatgpt_auth(self) -> None:
+        auth_path = getattr(self, "_chatgpt_auth_path", None)
+        self._chatgpt_auth_path = None
+        if auth_path is None:
+            return
+        try:
+            Path(auth_path).unlink(missing_ok=True)
+        except OSError as exc:
+            logger.warning("codex: failed to remove transient ChatGPT auth: %s", exc)
 
     def _build_env(self, cfg: CodexConfig) -> dict[str, str]:
         env = os.environ.copy()
@@ -631,11 +942,36 @@ class CodexDeployer(BaseAgentDeployer):
                     "Export it or pass it via executor env before launch()."
                 )
             env["CODEX_API_KEY"] = oai_key
+        elif cfg.provider == "chatgpt":
+            if not env.get("CODEX_AUTH_JSON", "").strip():
+                raise RuntimeError(
+                    "codex: provider=chatgpt but CODEX_AUTH_JSON is not set"
+                )
+            codex_home = str(getattr(self, "_codex_home", "")).strip()
+            if not codex_home:
+                raise RuntimeError("codex: isolated CODEX_HOME was not initialized")
+            env["CODEX_HOME"] = codex_home
+            env.pop("OPENAI_API_KEY", None)
+            env.pop("OPENROUTER_API_KEY", None)
+            env.pop("CODEX_API_KEY", None)
+            env.pop("OPENAI_BASE_URL", None)
+            env.pop("CODEX_AUTH_JSON", None)
         else:
             raise RuntimeError(
                 f"codex: unknown provider {cfg.provider!r} "
-                "(expected 'openrouter' or 'direct')"
+                "(expected 'openrouter', 'direct', or 'chatgpt')"
             )
+
+        if cfg.proxy_url:
+            env["HTTP_PROXY"] = cfg.proxy_url
+            env["HTTPS_PROXY"] = cfg.proxy_url
+            env["ALL_PROXY"] = cfg.proxy_url
+            no_proxy = env.get("NO_PROXY", env.get("no_proxy", ""))
+            entries = [item.strip() for item in no_proxy.split(",") if item.strip()]
+            for local_host in ("127.0.0.1", "localhost", "::1"):
+                if local_host not in entries:
+                    entries.append(local_host)
+            env["NO_PROXY"] = ",".join(entries)
 
         env["NO_COLOR"] = "1"
         return env
@@ -643,6 +979,67 @@ class CodexDeployer(BaseAgentDeployer):
     # =========================================================================
     # parse_artifacts
     # =========================================================================
+
+    def _capture_codex_session(self, work_dir: Path, transcript_file: Path) -> None:
+        """Copy this run's Codex session JSONL into ``work_dir``.
+
+        Codex session filenames contain the ``thread.started`` ID.  Matching
+        by ID avoids copying sessions from an earlier run when the VM/template
+        reuses ``~/.codex``.  A small manifest is written even when no matching
+        file exists, so the host artifact is explicit about capture status.
+        """
+        codex_home_raw = str(getattr(self, "_codex_home", "")).strip()
+        # Never interpret an unset home as a relative ``./sessions`` path in
+        # the task work directory; that could accidentally capture unrelated
+        # task data.
+        session_root = Path(codex_home_raw) / "sessions" if codex_home_raw else None
+        capture_dir = work_dir / self._SESSION_ARTIFACT_DIR
+        capture_dir.mkdir(parents=True, exist_ok=True)
+
+        thread_id = self._read_thread_id(transcript_file)
+
+        matches: list[Path] = []
+        if thread_id and session_root is not None and session_root.is_dir():
+            for candidate in sorted(session_root.rglob("*.jsonl")):
+                if not candidate.is_file():
+                    continue
+                if thread_id in candidate.name:
+                    matches.append(candidate)
+                    continue
+                # Some Codex builds omit the thread ID from the filename but
+                # put it in the session_meta record. Inspect only the first
+                # small prefix so a large transcript is never read twice.
+                try:
+                    prefix = candidate.read_bytes()[:64 * 1024]
+                except OSError:
+                    continue
+                if thread_id.encode("utf-8") in prefix:
+                    matches.append(candidate)
+
+        copied: list[str] = []
+        for source in matches:
+            # Keep the date directory layout while preventing path traversal
+            # and collisions between multiple matching session files.
+            assert session_root is not None
+            relative = source.relative_to(session_root)
+            destination = capture_dir / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, destination)
+            copied.append(str(relative).replace("\\", "/"))
+
+        manifest = {
+            "status": "captured" if copied else "not_found",
+            "thread_id": thread_id,
+            "session_root": str(session_root) if session_root is not None else None,
+            "files": copied,
+        }
+        (capture_dir / "manifest.json").write_text(
+            json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+        )
+        if copied:
+            logger.info("codex: captured session %s", ", ".join(copied))
+        else:
+            logger.info("codex: no session JSONL found for thread %s", thread_id)
 
     @classmethod
     def parse_artifacts(
@@ -677,8 +1074,7 @@ class CodexDeployer(BaseAgentDeployer):
 
         raw = transcript_file.read_text(encoding="utf-8", errors="replace")
         # Strip UTF-8 BOM if present (PowerShell on Windows may produce this)
-        if raw.startswith("﻿"):
-            raw = raw[1:]
+        raw = raw.removeprefix("﻿")
 
         events: list[dict] = []
         for line in raw.splitlines():

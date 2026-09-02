@@ -198,6 +198,10 @@ Notes:
 | `model_catalog_content` | str | `""` | Auto-populated from `model_catalog_path` (do not set by hand) — carries the catalog text to the in-sandbox deployer |
 | `feature_overrides` | dict | `{}` | `{feature_key: bool}` written to config.toml `[features]`; force-enable/disable codex features (== tool surface). Empty = codex defaults |
 | `otel_enabled` | bool | `true` | Start a run-local OTLP/HTTP receiver and persist complete Codex telemetry, API timing, prompts, and tool results. Raw requests use a bounded-record WAL that is incrementally mirrored from sandbox VMs; event and summary files are rebuilt from it during finalization |
+| `capture_session` | bool | `true` | Copy the matching Codex session JSONL into the gathered run artifacts |
+| `rate_limit_resume_retries` | int | `4` | Resume the same session in the same VM after Codex exits on HTTP 429 |
+| `rate_limit_backoff_base_s` | float | `30.0` | Initial delay before a rate-limit resume |
+| `rate_limit_backoff_max_s` | float | `240.0` | Maximum exponential-backoff delay |
 
 > `timeout_s` is **not** an agent knob — the episode wall budget is
 > orchestration-owned (the executor wraps `launch()` in `wait_for`).

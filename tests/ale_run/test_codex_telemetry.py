@@ -3,7 +3,11 @@ from __future__ import annotations
 import json
 import urllib.request
 from pathlib import Path
+from types import SimpleNamespace
 
+import pytest
+
+from ale_run.agents.codex.config import CodexConfig
 from ale_run.agents.codex.deployer import CodexDeployer
 from ale_run.agents.codex.telemetry import (
     CodexOtelCollector,
@@ -161,6 +165,149 @@ def test_large_raw_request_is_chunked_and_recovers_derived_files(tmp_path: Path)
 def test_codex_incrementally_mirrors_raw_telemetry_wal() -> None:
     assert "otel_requests.jsonl" in CodexDeployer.hot_artifacts
     assert "telemetry.jsonl" not in CodexDeployer.hot_artifacts
+
+
+def test_codex_rate_limit_resume_is_enabled_globally() -> None:
+    config = CodexConfig()
+    assert config.rate_limit_resume_retries == 4
+    assert config.rate_limit_backoff_base_s == 30.0
+    assert config.rate_limit_backoff_max_s == 240.0
+
+
+def test_codex_session_capture_copies_matching_thread(tmp_path: Path) -> None:
+    codex_home = tmp_path / "codex-home"
+    session_dir = codex_home / "sessions" / "2026" / "09" / "01"
+    session_dir.mkdir(parents=True)
+    thread_id = "01test-thread"
+    session = session_dir / f"rollout-2026-09-01T00-00-00-{thread_id}.jsonl"
+    session.write_text(
+        '{"type":"response_item","payload":{"type":"reasoning",'
+        '"encrypted_content":"opaque"}}\n',
+        encoding="utf-8",
+    )
+    # An older/unrelated session must not be copied.
+    (session_dir / "rollout-old-other-thread.jsonl").write_text("old\n")
+
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_text(
+        json.dumps({"type": "thread.started", "thread_id": thread_id}) + "\n",
+        encoding="utf-8",
+    )
+    deployer = CodexDeployer(SimpleNamespace(config=None))
+    deployer._codex_home = str(codex_home)
+    deployer._capture_codex_session(tmp_path / "work", transcript)
+
+    captured = tmp_path / "work" / "codex_session"
+    assert (captured / "2026/09/01" / session.name).read_text() == session.read_text()
+    assert not (captured / "2026/09/01" / "rollout-old-other-thread.jsonl").exists()
+    manifest = json.loads((captured / "manifest.json").read_text())
+    assert manifest["status"] == "captured"
+    assert manifest["thread_id"] == thread_id
+
+
+def test_codex_session_capture_matches_thread_in_metadata(tmp_path: Path) -> None:
+    codex_home = tmp_path / "codex-home"
+    session_dir = codex_home / "sessions" / "2026" / "09" / "01"
+    session_dir.mkdir(parents=True)
+    thread_id = "01metadata-thread"
+    session = session_dir / "rollout-without-id.jsonl"
+    session.write_text(
+        json.dumps(
+            {
+                "type": "session_meta",
+                "payload": {"id": thread_id},
+            }
+        )
+        + "\n"
+        + '{"type":"response_item","payload":{"type":"reasoning",'
+        '"encrypted_content":"opaque-from-metadata-match"}}\n',
+        encoding="utf-8",
+    )
+
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_text(
+        json.dumps({"type": "thread.started", "thread_id": thread_id}) + "\n",
+        encoding="utf-8",
+    )
+    deployer = CodexDeployer(SimpleNamespace(config=None))
+    deployer._codex_home = str(codex_home)
+    deployer._capture_codex_session(tmp_path / "work", transcript)
+
+    captured = tmp_path / "work" / "codex_session" / "2026/09/01" / session.name
+    assert captured.read_text(encoding="utf-8") == session.read_text(encoding="utf-8")
+    manifest = json.loads(
+        (tmp_path / "work/codex_session/manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["status"] == "captured"
+    assert manifest["files"] == ["2026/09/01/rollout-without-id.jsonl"]
+
+
+@pytest.mark.asyncio
+async def test_codex_resumes_same_session_after_rate_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    work_dir = tmp_path / "work"
+    (work_dir / ".git").mkdir(parents=True)
+    thread_id = "01rate-limit-thread"
+    invocations: list[tuple[list[str], str]] = []
+
+    class FakeProcess:
+        def __init__(self, argv, *, stdin, stdout, stderr, **kwargs) -> None:
+            del stderr, kwargs
+            invocation = len(invocations)
+            invocations.append((list(argv), stdin.read().decode("utf-8")))
+            self.pid = 1000 + invocation
+            if invocation == 0:
+                stdout.write(
+                    (
+                        json.dumps({"type": "thread.started", "thread_id": thread_id})
+                        + "\n"
+                        + json.dumps(
+                            {
+                                "type": "error",
+                                "message": "exceeded retry limit, last status: "
+                                "429 Too Many Requests",
+                            }
+                        )
+                        + "\n"
+                    ).encode()
+                )
+                self.returncode = 1
+            else:
+                stdout.write(b'{"type":"turn.completed","usage":{}}\n')
+                self.returncode = 0
+            stdout.flush()
+
+        def poll(self) -> int:
+            return self.returncode
+
+    monkeypatch.setattr("ale_run.agents.codex.deployer.subprocess.Popen", FakeProcess)
+    config = CodexConfig(
+        provider="openrouter",
+        otel_enabled=False,
+        capture_session=False,
+        rate_limit_resume_retries=2,
+        rate_limit_backoff_base_s=0.001,
+        rate_limit_backoff_max_s=0.001,
+    )
+    executor = SimpleNamespace(
+        config=config,
+        work_dir=str(work_dir),
+        env={"OPENROUTER_API_KEY": "test-key"},
+    )
+    deployer = CodexDeployer(executor)
+    deployer._codex_path = "/usr/bin/codex"
+
+    result = await deployer.launch("complete the task")
+
+    assert result.status == "completed"
+    assert result.exit_code == 0
+    assert len(invocations) == 2
+    assert invocations[0][0][:2] == ["/usr/bin/codex", "exec"]
+    assert invocations[0][1] == "complete the task"
+    assert invocations[1][0][:3] == ["/usr/bin/codex", "exec", "resume"]
+    assert invocations[1][0][-2:] == [thread_id, "-"]
+    assert "Continue the original task" in invocations[1][1]
 
 
 def test_recovery_ignores_incomplete_trailing_request(tmp_path: Path) -> None:

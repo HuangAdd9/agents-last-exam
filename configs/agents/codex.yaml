@@ -42,6 +42,16 @@ config:
   # tool arguments, tool output, and per-tool duration.
   otel_enabled: true
 
+  # Preserve the matching Codex session JSONL, including encrypted_content.
+  capture_session: true
+
+  # When Codex exhausts its internal retries on HTTP 429, resume the same
+  # session in the same VM after 30, 60, 120, and 240 seconds. Set retries to 0
+  # to disable this global safeguard for a specific rollout.
+  rate_limit_resume_retries: 4
+  rate_limit_backoff_base_s: 30.0
+  rate_limit_backoff_max_s: 240.0
+
   # model_reasoning_effort → Responses-API reasoning.effort. off|low|medium|high.
   reasoning_effort: high
 

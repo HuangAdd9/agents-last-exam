@@ -10,7 +10,8 @@ fix and the OpenRouter MCP adaptation (namespaced-tool flatten + dispatch
 remap). Built from cua-verse/codex ``agenthle``; published as the release below.
 
 Auth: OpenRouter routing uses ``OPENROUTER_API_KEY`` injected via env.
-Direct OpenAI routing uses ``OPENAI_API_KEY``.
+Direct OpenAI routing uses ``OPENAI_API_KEY``. ChatGPT subscription routing
+uses a transient ``CODEX_AUTH_JSON`` payload written to an isolated Codex home.
 """
 from __future__ import annotations
 
@@ -74,6 +75,8 @@ class CodexConfig:
         Requires OPENROUTER_API_KEY.
       - ``"direct"`` → direct OpenAI routing via OPENAI_API_KEY.
         Requires OPENAI_API_KEY.
+      - ``"chatgpt"`` → OpenAI routing with a ChatGPT subscription login.
+        Requires CODEX_AUTH_JSON, supplied by the rollout account selector.
     Missing the required key for the chosen provider is a hard error."""
 
     base_url: str | None = None
@@ -84,6 +87,11 @@ class CodexConfig:
     ``<base_url>/responses``. For Volcengine Ark use
     ``https://ark.cn-beijing.volces.com/api/v3`` and an Ark ``ep-...`` endpoint
     id as ``model``."""
+
+    proxy_url: str | None = None
+    """Optional HTTP proxy used only by the Codex child process. The deployer
+    exports it through HTTP_PROXY, HTTPS_PROXY, and ALL_PROXY while keeping
+    localhost in NO_PROXY so the CUA MCP bridge remains direct."""
 
     api_key: str | None = None
     """Literal API key for the ``base_url`` gateway. ``None`` ⇒ the key is read
@@ -161,7 +169,45 @@ class CodexConfig:
     # events, API-call timings, prompts, and tool arguments/results in work_dir.
     otel_enabled: bool = True
 
+    # Preserve the Codex session JSONL after the child exits.  The session file
+    # contains the opaque reasoning items (including encrypted_content) that
+    # Codex keeps for context continuity; it is deliberately captured as an
+    # opaque artifact rather than parsed into ALE's public trajectory format.
+    # The file is copied into the deployer work_dir and therefore gathered by
+    # ALE under origin_log/codex/.  Disable only when the additional sensitive
+    # conversation artifact must not be retained.
+    capture_session: bool = True
+
+    # Retry a turn that still exits with HTTP 429 after Codex exhausts its own
+    # short transport retries. Each retry resumes the same session in the same
+    # VM, preserving tool state and encrypted reasoning context.
+    rate_limit_resume_retries: int = 4
+    rate_limit_backoff_base_s: float = 30.0
+    rate_limit_backoff_max_s: float = 240.0
+
     def __post_init__(self) -> None:
+        if (
+            isinstance(self.rate_limit_resume_retries, bool)
+            or not isinstance(self.rate_limit_resume_retries, int)
+            or self.rate_limit_resume_retries < 0
+        ):
+            raise ValueError("rate_limit_resume_retries must be a non-negative integer")
+        for field_name, value in (
+            ("rate_limit_backoff_base_s", self.rate_limit_backoff_base_s),
+            ("rate_limit_backoff_max_s", self.rate_limit_backoff_max_s),
+        ):
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or value <= 0
+            ):
+                raise ValueError(f"{field_name} must be a positive number")
+        if self.rate_limit_backoff_max_s < self.rate_limit_backoff_base_s:
+            raise ValueError(
+                "rate_limit_backoff_max_s must be greater than or equal to "
+                "rate_limit_backoff_base_s"
+            )
+
         # Load the catalog host-side (build_config) and embed its content so it
         # reaches the in-sandbox deployer. On the in-sandbox reconstruction the
         # content kwarg is already populated → we skip the (host-only) file read.
