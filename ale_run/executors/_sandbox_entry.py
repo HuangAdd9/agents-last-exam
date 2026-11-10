@@ -31,13 +31,13 @@ import time
 import traceback
 from pathlib import Path
 
-
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s  %(levelname)-7s  %(name)s  %(message)s",
 )
 logger = logging.getLogger("sandbox_entry")
 _PROCESS_STOP_TIMEOUT_S = 20.0
+_CHILD_REAP_INTERVAL_S = 0.5
 _SYSTEMD_RUNTIME = Path("/run/systemd/system")
 
 
@@ -67,7 +67,7 @@ def launch(spec_path: Path, spec: dict) -> int:
             state = subprocess.run(
                 [*privilege, systemctl, "show", unit,
                  "--property=LoadState,ActiveState,MainPID"],
-                capture_output=True, text=True, timeout=15,
+                capture_output=True, text=True, timeout=15, check=False,
             )
             properties = dict(
                 line.split("=", 1) for line in state.stdout.splitlines() if "=" in line
@@ -110,7 +110,7 @@ def launch(spec_path: Path, spec: dict) -> int:
                 "--", sys.executable, "-c", bootstrap, str(environment_path), str(spec_path),
             ]
             try:
-                started = subprocess.run(command, capture_output=True, text=True, timeout=30)
+                started = subprocess.run(command, capture_output=True, text=True, timeout=30, check=False)
                 if started.returncode != 0:
                     raise RuntimeError(
                         f"systemd supervisor launch failed ({started.returncode}): {started.stderr.strip()}",
@@ -140,6 +140,17 @@ class _LinuxProcessTree:
         enabled = ctypes.c_int()
         if libc.prctl(37, ctypes.byref(enabled), 0, 0, 0) != 0 or enabled.value != 1:
             raise RuntimeError("child subreaper unavailable")
+
+    def reap_exited_children(self, *, exclude_pid: int) -> None:
+        """Reap adopted children while preserving the Popen-managed worker status."""
+        children_path = Path(f"/proc/self/task/{os.getpid()}/children")
+        for child_pid in map(int, children_path.read_text().split()):
+            if child_pid == exclude_pid:
+                continue
+            try:
+                os.waitpid(child_pid, os.WNOHANG)
+            except ChildProcessError:
+                pass
 
     def is_empty(self) -> bool:
         while True:
@@ -308,6 +319,7 @@ def supervise(spec_path: Path, spec: dict, *, protected: bool = False) -> dict:
             worker.stdin.write(b"1")
             worker.stdin.close()
             worker_finished = False
+            next_reap = started
             while True:
                 if not worker_finished and worker.poll() is not None:
                     try:
@@ -335,6 +347,11 @@ def supervise(spec_path: Path, spec: dict, *, protected: bool = False) -> dict:
                         f"; prior error: {prior_error}" if prior_error else ""
                     ))
                     break
+                if not worker_finished and isinstance(process_tree, _LinuxProcessTree):
+                    now = time.monotonic()
+                    if now >= next_reap:
+                        process_tree.reap_exited_children(exclude_pid=worker.pid)
+                        next_reap = now + _CHILD_REAP_INTERVAL_S
                 if worker_finished and process_tree.is_empty():
                     drained = True
                     break
@@ -474,7 +491,7 @@ def run(spec: dict, env: dict | None = None) -> dict:
             "exit_code": result.exit_code,
             "duration_s": result.duration_s,
         }
-    except Exception as exc:                                       # noqa: BLE001
+    except Exception as exc:
         logger.exception("sandbox_entry crashed")
         return {
             "ok": False,
