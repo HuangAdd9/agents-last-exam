@@ -4,11 +4,10 @@ Per-unit isolation:
     - One fresh ``ale.make(task_path)`` per unit (env binds task at ctor)
     - One fresh deployer instance per unit (configs are per-run state)
 
-Concurrency is a single ``asyncio.Semaphore`` sized to ``spec.concurrency``
-(matches simprun's one-knob model). Each unit holds the slot for its
-full lifetime — VM acquire + agent run + post-launch fan-out + eval —
-so the cap is effectively "max VMs alive at once". Size to
-``min(GCP quota, LLM rate-limit / N)``.
+Concurrency is a resizable limiter. The initial value comes from
+``spec.concurrency``; while the run is alive, writing an integer to
+``<output_root>/concurrency.control`` raises or lowers the pool. Raising it
+wakes queued units, while lowering it never interrupts holders.
 
 Provider is shared across units — real providers (gcloud) acquire
 a fresh VM per ``acquire()`` call, so concurrent acquires give concurrent
@@ -20,10 +19,12 @@ import asyncio
 import logging
 from collections.abc import Iterable
 from pathlib import Path
+from contextlib import suppress
 
 from .experiment_spec import ExperimentSpec, RunUnit, UnitResult
 from .factory import EnvironmentRouter
 from .judge_preflight import check_judges
+from .concurrency import ResizableLimiter
 
 logger = logging.getLogger(__name__)
 
@@ -94,8 +95,37 @@ class Runner:
         self._output_root.mkdir(parents=True, exist_ok=True)
 
         n = self._spec.concurrency
-        sem = asyncio.Semaphore(n)
+        sem = ResizableLimiter(n)
         logger.info("runner: %d units, concurrency=%d", len(unit_list), n)
+
+        control_path = self._output_root / "concurrency.control"
+        stop_control = asyncio.Event()
+
+        async def _watch_concurrency() -> None:
+            last_value: int | None = None
+            while not stop_control.is_set():
+                try:
+                    raw = control_path.read_text(encoding="utf-8").strip()
+                    value = int(raw)
+                    if value < 1:
+                        raise ValueError("must be >= 1")
+                    if value != last_value:
+                        if await sem.set_limit(value):
+                            logger.warning(
+                                "concurrency changed: %d (active=%d)",
+                                value, sem.active,
+                            )
+                        last_value = value
+                except FileNotFoundError:
+                    pass
+                except (OSError, ValueError) as exc:
+                    logger.warning("ignoring invalid concurrency.control: %s", exc)
+                try:
+                    await asyncio.wait_for(stop_control.wait(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    pass
+
+        control_task = asyncio.create_task(_watch_concurrency())
 
         async def _drive(u: RunUnit) -> UnitResult:
             for attempt in range(1, max_attempts + 1):
@@ -132,8 +162,14 @@ class Runner:
 
             raise AssertionError("unreachable")
 
-        results = await asyncio.gather(
-            *(_drive(u) for u in unit_list),
-            return_exceptions=False,
-        )
-        return list(results)
+        try:
+            results = await asyncio.gather(
+                *(_drive(u) for u in unit_list),
+                return_exceptions=False,
+            )
+            return list(results)
+        finally:
+            stop_control.set()
+            control_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await control_task
