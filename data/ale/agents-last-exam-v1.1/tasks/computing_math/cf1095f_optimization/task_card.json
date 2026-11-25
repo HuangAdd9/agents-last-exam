@@ -1,0 +1,22 @@
+{
+  "taskId": "computing_math/cf1095f_optimization",
+  "title": "Connection Replay Service Handover",
+  "summary": "Recover the deployed contract from versioned handover artifacts and optimize its correct slow C++17 replay service.",
+  "category": "computing_math",
+  "taskPrompt": "Start at input/README.md, resolve the deployed release from visible handover records, then optimize output/solution.cpp without changing results. Submit one C++17 source. Read deployment quotas and acceptance rules in the handover. Run bash run_tests.sh in output for public regressions.",
+  "software": ["GNU C++17", "Python 3", "Bash"],
+  "inputFiles": [
+    {"name":"README.md","path":"input/README.md","format":"Markdown","description":"Handover entry and precedence rule."},
+    {"name":"handover","path":"input/handover","format":"CSV and text","description":"Release selection with referenced transport, ticket, archived contract and deployment records."},
+    {"name":"solution.cpp","path":"input/solution.cpp","format":"C++17","description":"Correct slow starter."},
+    {"name":"public","path":"input/public","format":"text","description":"Public example inputs and outputs."}
+  ],
+  "referenceFiles": [
+    {"name":"solution.cpp","path":"output/solution.cpp","format":"C++17","description":"The required submitted source."}
+  ],
+  "agentMustDo": ["Inspect the correct slow implementation and complete problem specification.","Optimize performance without changing exact results.","Save output/solution.cpp and verify relevant behavior."],
+  "evaluation": "Compile the submitted source with GNU C++17 -O2 -pipe. Execute legal private inputs with 6-second wall and 512-MiB address-space limits. Compare all prefix answers as signed 64-bit integers. Groups A/B/C/D/E award 15/20/25/30/10 points only when every case in that group passes. Infrastructure failures raise errors and are not zero scores.",
+  "variants": ["base"],
+  "vm": {"snapshot":"cpu-free-ubuntu","os":"linux","vcpus":4,"memory_gb":8,"timeout_s":18000},
+  "requiredSystemPackages": ["g++", "python3"]
+}

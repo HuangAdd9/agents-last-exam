@@ -1,0 +1,14 @@
+# Local execution profile for generated visual-media tasks that need the open
+# Blender/Godot/media tool stack. Tasks that only need the official environment
+# should continue to use configs/environments/docker.yaml.
+snapshots:
+  cpu-free-ubuntu:
+    provider: docker
+    image: ale-ubuntu22-docker
+    docker:
+      image_ref: ale/base-visual-media:20260922-2
+      shm_size: 2g
+      resolution: [1920, 1080]
+      apparmor_unconfined: true
+task_data_source: local:task-data
+output_path: null

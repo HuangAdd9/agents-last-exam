@@ -1,0 +1,20 @@
+{
+  "taskId": "computing_math/cf1305e_test_generation",
+  "category": "computing_math",
+  "title": "E / dispatch 17",
+  "description": "Restore the test sender in the inherited dispatch workspace. Submit a self-contained C++17 generator in output/gen.cpp; scoring measures faults exposed in a frozen receiver pool. Start with input/INBOX and the current receipts.",
+  "software": ["GNU C++17", "Python 3", "Bash"],
+  "inputFiles": [
+    {"name":"INBOX","path":"input/INBOX","format":"text","description":"Handoff."},
+    {"name":"receipts","path":"input/receipts","format":"mixed text","description":"Current dispatch receipts and retained logs."},
+    {"name":"vendor","path":"input/vendor","format":"source","description":"Archived implementation exports."},
+    {"name":"attic","path":"input/attic","format":"HTML/text/shell","description":"Old task material and scripts."}
+  ],
+  "referenceFiles": [{"name":"gen.cpp","path":"output/gen.cpp","format":"C++17","description":"Required self-contained generator source."}],
+  "agentMustDo": ["Recover the current dispatch contract from the workspace.","Create a legal test generator that exposes receiver faults.","Submit output/gen.cpp."],
+  "evaluation": "Compile and execute the generator, validate its dispatch, then replay against 18 frozen algorithmic mutants. Family weights and resource limits are in the current receipts. Correct controls are checked semantically. Judge and environment faults raise errors.",
+  "variants": ["base"],
+  "vm": {"snapshot":"cpu-free-ubuntu","os":"linux","vcpus":4,"memory_gb":8,"timeout_s":18000},
+  "requiredSystemPackages": ["g++","python3","sudo"],
+  "requiredCredentials": []
+}

@@ -1,0 +1,34 @@
+{
+  "taskId": "physical_sciences/phys_paper_c2a4326b1e9d33e0_spiral_a_multiresolution_global_tomography_model",
+  "title": "SPiRaL-inspired multiresolution VTI ray-tracing forward model",
+  "summary": "Trace synthetic 3-D tessellated source-receiver rays through VTI cells, apply group/slowness correction to Christoffel phase speeds, emit traces and material anisotropy checks, and generalize across coarse and refined meshes.",
+  "category": "physical_sciences",
+  "taxonomy": {
+    "domain_code": "physical_sciences",
+    "domain_name": "Physical Sciences",
+    "subdomain_code": "geophysics_seismology",
+    "subdomain_name": "Geophysics & Seismology"
+  },
+  "software": ["Python 3 standard library"],
+  "requiredSystemPackages": [],
+  "vm": {"machineType": "c4-standard-2", "snapshot": "cpu-free-ubuntu", "vcpus": 2, "memory_gb": 4, "disk_gb": 10, "timeout_s": 1800},
+  "inputFiles": [
+    {"name": "VTI benchmark instance", "format": "JSON", "path": "input/problem.json", "description": "Three visible synthetic layered ray paths with lengths, angles, VTI speeds and Thomsen delta."},
+    {"name": "Scientific specification", "format": "Markdown", "path": "input/spec.md", "description": "Christoffel matrix, units, output schemas, invariants, and solver CLI contract."}
+  ],
+  "referenceFiles": [
+    {"name": "Evaluator reference", "format": "JSON", "path": "reference/reference.json", "description": "Oracle values for visible and hidden fixtures; evaluator-only."},
+    {"name": "Hidden changed instance A", "format": "JSON", "path": "reference/hidden_problem.json", "description": "Evaluator-only refined ray geometry and material values."},
+    {"name": "Hidden changed instance B", "format": "JSON", "path": "reference/hidden_problem_2.json", "description": "Evaluator-only coarse/fine multiresolution domain with independent materials."}
+  ],
+  "taskPrompt": "You are implementing a synthetic 3-D tessellated source-receiver ray-tracing workflow inspired by the SPiRaL global tomography model. Read input/spec.md completely.\n\nRead input/problem.json and implement the VTI Christoffel qP/qSV/qSH phase calculation plus the specified support/stationary group-slowness maximization for oblique geometric rays. Produce output/result.json, output/trace.csv, and output/solver.py. The solver.py must be reusable and runnable as `python solver.py --input PATH --result PATH --trace PATH`; it must use only the Python standard library and work for arbitrary conforming coarse/fine tessellations.\n\nYour result.json must contain exactly schema_version, visible, and invariant (v2). Preserve ray and tessellated-cell order. The CSV header and row schema in spec.md are exact. Check finite values, qP >= qSV, and material xi=(Vsh/Vsv)^2. Do not modify input/. Do not use internet, NumPy, SciPy, or hard-coded visible answers. The evaluator independently reruns your solver on two changed hidden meshes and recomputes every eigenvalue and group slowness.",
+  "agentMustDo": [
+    "Derive the TI stiffness terms, 2x2 Christoffel eigenvalues, and support/stationary group slowness from input/spec.md.",
+    "Implement a reusable solver.py CLI and run it on the visible instance.",
+    "Emit exact JSON and CSV schemas, including an intermediate per-segment trace and invariant fields.",
+    "Validate units, ray/group correction, material xi and eigenvalue ordering; do not hard-code visible values."
+  ],
+  "evaluation": "Hard gates reject missing/malformed/oversized files, extra JSON keys, wrong CSV headers/rows, non-finite values, forbidden imports, or failed solver CLI. Weighted score: 0.45 visible travel times/xi, 0.20 trace, 0.15 physical invariants, 0.20 hidden solver recomputation. The hidden component independently recomputes all trace physics from two changed fixtures and is required for a high score.",
+  "expected_runtime_minutes": 1,
+  "network": false
+}

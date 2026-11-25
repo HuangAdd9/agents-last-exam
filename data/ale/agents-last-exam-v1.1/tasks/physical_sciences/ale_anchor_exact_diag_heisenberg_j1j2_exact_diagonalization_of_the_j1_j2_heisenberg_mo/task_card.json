@@ -1,0 +1,74 @@
+{
+  "taskId": "physical_sciences/ale_anchor_exact_diag_heisenberg_j1j2_exact_diagonalization_of_the_j1_j2_heisenberg_mo",
+  "title": "Exact diagonalization audit of a rectangular frustrated J1-J2 cluster",
+  "summary": "Reproduce a pinned three-tier Heisenberg exact-diagonalization workflow, then expose a hidden-coupling solver probe.",
+  "category": "physical_sciences",
+  "software": [
+    "/usr/bin/python3 (Python 3.10.12)",
+    "NumPy 2.2.6 (snapshot-provided)"
+  ],
+  "taskPrompt": "Read input/problem_spec.md and input/model_config.json. Implement the exact workflow and write the four numerical artifacts plus executable output/solver.py. The evaluator runs solver.py on a hidden J2 case.",
+  "inputFiles": [
+    {
+      "name": "problem_spec.md",
+      "format": "Markdown",
+      "path": "input/problem_spec.md",
+      "description": "Scientific workflow and exact output contract."
+    },
+    {
+      "name": "model_config.json",
+      "format": "JSON",
+      "path": "input/model_config.json",
+      "description": "Visible rectangular-cluster parameters and numerical grids."
+    }
+  ],
+  "referenceFiles": [
+    {
+      "name": "visible reference artifacts",
+      "format": "NPZ/JSON",
+      "path": "reference/",
+      "description": "Evaluator-only visible outputs and diagnostics."
+    },
+    {
+      "name": "hidden coupling fixture",
+      "format": "JSON",
+      "path": "reference/hidden_case/",
+      "description": "Evaluator-only J2 mutation used to exercise solver.py."
+    }
+  ],
+  "evaluation": "Hard schema and finite-value gates, Hamiltonian residual, static sum rule, exact visible reference comparison, dynamic sum rule, and an evaluator-only hidden J2=0.62 solver run. Full score is 1.0; malformed or scientifically inconsistent submissions score 0.",
+  "vm": {
+    "machineType": "c4-standard-4",
+    "snapshot": "cpu-free-ubuntu",
+    "vcpus": 4,
+    "memory_gb": 8,
+    "disk_gb": 20,
+    "timeout_s": 3600
+  },
+  "requiredSystemPackages": [],
+  "workflowSteps": [
+    "construct the Sz=0 basis and periodic Hamiltonian",
+    "diagonalize and form correlations/static structure factors",
+    "generate broadened dynamics and Lanczos coefficients",
+    "package outputs and a reusable solver.py for the hidden coupling"
+  ],
+  "intermediateArtifact": "output/solver.py is the reusable numerical workflow exercised by the evaluator-only hidden case",
+  "taxonomy": {
+    "domain_code": "physical_sciences",
+    "subdomain_code": "physics",
+    "task_family": "numerical_physics",
+    "adapter": "scientific_spec_to_numerical_benchmark"
+  },
+  "provenance": {
+    "upstream_task": "agents-last-exam/tasks/physical_sciences/exact_diag_heisenberg_j1j2",
+    "upstream_url": "https://github.com/rdi-berkeley/agents-last-exam/tree/main/tasks/physical_sciences/exact_diag_heisenberg_j1j2",
+    "source_license": "Apache-2.0 code repository; benchmark-authored task/data terms",
+    "change": "3x4 cluster, J2=0.35, 80 Lanczos steps, 240 frequencies, and hidden J2=0.62 probe"
+  },
+  "agentMustDo": [
+    "Construct the Sz=0 basis and periodic J1-J2 Hamiltonian from the supplied model configuration.",
+    "Diagonalize the visible instance and compute the governed ground-state, correlation, dynamical, and summary artifacts.",
+    "Write ground_state.npz, correlations.npz, dynamical_sf.npz, results.json, and an executable solver.py under output/.",
+    "Keep solver.py reusable because the evaluator runs it against an evaluator-only J2 coupling."
+  ]
+}

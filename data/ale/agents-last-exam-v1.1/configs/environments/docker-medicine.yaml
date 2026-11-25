@@ -1,0 +1,165 @@
+# Harness-neutral Docker snapshots for generated medicine tasks.
+#
+# Each image is built from a clean ALE runtime, desktop, or DinD base. Task
+# data, hidden references, and the selected agent harness are injected by the
+# runner and are never baked into these images. Keep image IDs locked here so a
+# reused tag cannot silently change a task's execution environment.
+snapshots:
+  medicine-core:
+    provider: docker
+    image: ale-ubuntu22-docker
+    docker:
+      image_ref: ale/base-life-core:20260922-2
+      expected_image_id: sha256:8ab57290736ce020c81bc0a290c95a1af7bd24c837802229936390da0cd7a0c4
+      shm_size: 2g
+      resolution: [1024, 768]
+      apparmor_unconfined: true
+      privileged: false
+      enable_dind: false
+
+  medicine-singlecell:
+    provider: docker
+    image: ale-ubuntu22-docker
+    docker:
+      image_ref: ale/base-life-singlecell:20260922-2
+      expected_image_id: sha256:877f2953350628173cf34bab7af7f5f904b7c0aecec9a2cf50e6d6eefde7f6de
+      shm_size: 2g
+      resolution: [1024, 768]
+      apparmor_unconfined: true
+      privileged: false
+      enable_dind: false
+
+  medicine-imaging:
+    provider: docker
+    image: ale-ubuntu22-docker
+    docker:
+      image_ref: ale/base-life-imaging:20260922-2
+      expected_image_id: sha256:c9f6dca723fd63f064be83acdfa55925f4f8c4190b1ac019fa4311a34ac99760
+      shm_size: 2g
+      resolution: [1024, 768]
+      apparmor_unconfined: true
+      privileged: false
+      enable_dind: false
+
+  medicine-amber:
+    provider: docker
+    image: ale-ubuntu22-docker
+    docker:
+      image_ref: ale/base-life-amber:20260922-2
+      expected_image_id: sha256:5d7811a4e4de7101baf1bd71312640a044fa8b231f129169b1d20334b4af7643
+      shm_size: 2g
+      resolution: [1024, 768]
+      apparmor_unconfined: true
+      privileged: false
+      enable_dind: false
+
+  medicine-browser:
+    provider: docker
+    image: ale-ubuntu22-docker
+    docker:
+      image_ref: ale/base-life-browser:20260922-2
+      expected_image_id: sha256:07c4ef6d8caca55d81fc65114c5df7d85765f7037c49e3545d3908985656dbd3
+      shm_size: 2g
+      resolution: [1024, 768]
+      apparmor_unconfined: true
+      privileged: false
+      enable_dind: false
+
+  medicine-genomics-dind:
+    provider: docker
+    image: ale-ubuntu22-docker
+    docker:
+      image_ref: ale/base-life-genomics-dind:20260922-2
+      expected_image_id: sha256:8405eb5a1ce8fca4ad7a0ca3d3ae75b1505201497f58657a1d438840f3388002
+      shm_size: 2g
+      resolution: [1024, 768]
+      apparmor_unconfined: true
+      privileged: true
+      enable_dind: true
+
+  medicine-research-python:
+    provider: docker
+    image: ale-ubuntu22-docker
+    docker:
+      image_ref: ale/base-life-research-python:20260922-2
+      expected_image_id: sha256:a655a4af9800c5b40899225e913a2cb36ad9046c68b56e9b209ea0ccb3337d2d
+      shm_size: 2g
+      resolution: [1024, 768]
+      apparmor_unconfined: true
+      privileged: false
+      enable_dind: false
+
+  medicine-phylogenomics:
+    provider: docker
+    image: ale-ubuntu22-docker
+    docker:
+      image_ref: ale/base-life-phylogenomics:20260922-2
+      expected_image_id: sha256:5fe2d057c4eb8411e28ab30c41e6f999c986f77f99b89888e4795760a7bb60db
+      shm_size: 2g
+      resolution: [1024, 768]
+      apparmor_unconfined: true
+      privileged: false
+      enable_dind: false
+
+  medicine-singlecell-python:
+    provider: docker
+    image: ale-ubuntu22-docker
+    docker:
+      image_ref: ale/base-medicine-singlecell-python:20260923-1
+      expected_image_id: sha256:943c696daeb4daaf3121d4fb691cf2db7418d9ba5888c454346210fee2fd87ff
+      shm_size: 2g
+      resolution: [1024, 768]
+      apparmor_unconfined: true
+      privileged: false
+      enable_dind: false
+
+  medicine-bioconductor:
+    provider: docker
+    image: ale-ubuntu22-docker
+    docker:
+      image_ref: ale/base-medicine-bioconductor:20260923-1
+      expected_image_id: sha256:d6d513489b32b1832950d334ce2a4899e921b1bace3471b7d4e59a82947c71ce
+      shm_size: 2g
+      resolution: [1024, 768]
+      apparmor_unconfined: true
+      privileged: false
+      enable_dind: false
+
+  medicine-massspec:
+    provider: docker
+    image: ale-ubuntu22-docker
+    docker:
+      image_ref: ale/base-medicine-massspec:20260923-1
+      expected_image_id: sha256:c4f1e029fdc3be3a82d08eee45b47e39975e66619f07a481bb67258ac8805a85
+      shm_size: 2g
+      resolution: [1024, 768]
+      apparmor_unconfined: true
+      privileged: false
+      enable_dind: false
+
+  medicine-microbiome:
+    provider: docker
+    image: ale-ubuntu22-docker
+    docker:
+      image_ref: ale/base-medicine-microbiome:20260923-1
+      expected_image_id: sha256:c86869a079714db354d81c56fbac98e4199dc43525de667e62c7e5b6fdd8b467
+      shm_size: 2g
+      resolution: [1024, 768]
+      apparmor_unconfined: true
+      privileged: false
+      enable_dind: false
+
+  medicine-molecular-sim:
+    provider: docker
+    image: ale-ubuntu22-docker
+    docker:
+      image_ref: ale/base-medicine-molecular-sim:20260923-1
+      expected_image_id: sha256:8f9936fd5fdc2403998ba9ea7069af3f7ab7566c458b9b7c9f6a0ace1070bc4f
+      shm_size: 2g
+      resolution: [1024, 768]
+      apparmor_unconfined: true
+      privileged: false
+      enable_dind: false
+
+task_data_source: local:task-data
+output_path: null

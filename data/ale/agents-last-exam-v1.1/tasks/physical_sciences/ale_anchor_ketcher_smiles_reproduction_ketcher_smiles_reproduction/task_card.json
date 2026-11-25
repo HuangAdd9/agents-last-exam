@@ -1,0 +1,58 @@
+{
+  "taskId": "physical_sciences/ale_anchor_ketcher_smiles_reproduction_ketcher_smiles_reproduction",
+  "title": "7YY SVG ligand reconstruction with hidden atom-label audit",
+  "summary": "Reconstruct the sourced 7YY ligand from a visible structure SVG, report chemical invariants, and provide a dependency-free parser that generalizes to a hidden halogen mutation.",
+  "category": "physical_sciences",
+  "software": [
+    "Python 3.10.12 (standard library only)"
+  ],
+  "taskPrompt": "See input/TASK_PROMPT.md.",
+  "agentMustDo": [
+    "Inspect input/structure.svg",
+    "Write output/atom_inventory.json",
+    "Write output/submission.json with a valid 7YY SMILES and invariants",
+    "Write executable output/solve.py that parses an arbitrary supplied SVG"
+  ],
+  "inputFiles": [
+    {
+      "name": "7YY structure drawing",
+      "format": ".svg",
+      "path": "input/structure.svg"
+    },
+    {
+      "name": "Task contract",
+      "format": ".md",
+      "path": "input/TASK_PROMPT.md"
+    }
+  ],
+  "referenceFiles": [
+    {
+      "name": "Evaluator reference",
+      "format": ".json",
+      "path": "reference/reference.json"
+    },
+    {
+      "name": "Hidden mutated SVG",
+      "format": ".svg",
+      "path": "reference/hidden_input/structure.svg"
+    }
+  ],
+  "evaluation": "Hard gates reject missing files, malformed JSON, extra keys, hash mismatch, wrong atom inventory, invalid SMILES, and missing/non-executable solve.py. Score rubric: schema/hash 0.15, chemical identity 0.35, formula/heavy-atom/ring/SMILES cross-checks 0.30, hidden mutation parser 0.20. Missing or malformed output returns 0.0. The hidden SVG changes one F label to Br; solve.py must parse labels and may not embed either sourced SMILES literal. The pass threshold is 0.95; a visible-only hard-coded solver scores 0.80 and does not pass.",
+  "vm": {
+    "machineType": "c4-standard-2",
+    "snapshot": "cpu-free-ubuntu",
+    "vcpus": 2,
+    "memory_gb": 4,
+    "disk_gb": 10,
+    "timeout_s": 3600,
+    "network": {
+      "mode": "off"
+    }
+  },
+  "requiredSystemPackages": [],
+  "taxonomy": {
+    "domain_code": "physical_sciences",
+    "subdomain_code": "chemistry_materials",
+    "task_family": "document_or_structure_extraction"
+  }
+}

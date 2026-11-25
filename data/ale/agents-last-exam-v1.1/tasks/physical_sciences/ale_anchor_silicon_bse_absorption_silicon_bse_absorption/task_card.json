@@ -1,0 +1,29 @@
+{
+  "taskId": "physical_sciences/ale_anchor_silicon_bse_absorption_silicon_bse_absorption",
+  "title": "Silicon GW-BSE absorption with QE and BerkeleyGW",
+  "summary": "Construct and execute a benchmark-scale Quantum ESPRESSO to BerkeleyGW GW-BSE workflow for bulk silicon and submit a reusable workflow for an evaluator-only changed cell and convergence case.",
+  "category": "physical_sciences",
+  "taskPrompt": "Read `base/input/problem_spec.md`. From the staged silicon POSCAR and UPF, create and execute real QE 6.7 and BerkeleyGW 4.0 decks for SCF, wavefunctions, epsilon, sigma, kernel, absorption, and inteqp. Write exactly the nine required files under `base/output`, including a reusable `workflow.py`; the evaluator reruns it on an evaluator-only changed structure, pseudopotential byte stream, cutoff, and optical setting.",
+  "software": ["Python 3.10", "Open MPI 4.1.6", "Quantum ESPRESSO 6.7MaX", "BerkeleyGW 4.0"],
+  "agentMustDo": [
+    "Parse the staged silicon.vasp and use the staged Si.UPF in QE.",
+    "Use the case-selected benchmark 5x5x5 grid, 41-band WFN, 10 Ry dielectric cutoff, and degeneracy-safe epsilon/sigma manifolds without overrides.",
+    "Run pw.x SCF and unshifted/shifted wavefunction calculations and convert both with pw2bgw.x.",
+    "Run epsilon.cplx.x, sigma.cplx.x, kernel.cplx.x, absorption.cplx.x, and inteqp.cplx.x on their actual intermediate files.",
+    "Preserve interacting and independent-particle absorption and eigenvalue tables as direct BerkeleyGW outputs.",
+    "Submit workflow.py implementing the documented CLI for evaluator-only reruns."
+  ],
+  "inputFiles": [
+    {"name": "workflow specification", "path": "input/problem_spec.md", "format": "Markdown"},
+    {"name": "visible convergence case", "path": "input/workflow_case.json", "format": "JSON"},
+    {"name": "silicon primitive cell", "path": "input/silicon.vasp", "format": "VASP"},
+    {"name": "silicon norm-conserving pseudopotential", "path": "input/Si.UPF", "format": "UPF"},
+    {"name": "pinned runtime declaration", "path": "input/runtime_manifest.json", "format": "JSON"}
+  ],
+  "referenceFiles": [],
+  "evaluation": "Hard gates require the exact output set, semantically valid stage decks and native completion logs for QE, pw2bgw, epsilon, sigma, kernel, absorption, and inteqp, complete q/k grids, correct staged cell/UPF/case provenance, full direct-table schemas, absolute absorption intensity, and distinct interacting and independent-particle spectra. K-resolved tables are canonicalized by physical keys, and degenerate optical subspaces are compared through invariant energies and total oscillator strengths. The evaluator first reruns workflow.py on an unstaged changed structure, pseudopotential byte stream, cutoff, and optical setting under an isolated candidate UID, then independently runs its evaluator-private QE/BerkeleyGW oracle on protected copies of the same inputs. Hidden failure caps the score below the 0.75 pass threshold.",
+  "vm": {"machineType": "c4-standard-16", "snapshot": "cpu-free-ubuntu", "vcpus": 16, "memory_gb": 32, "disk_gb": 40, "timeout_s": 7200},
+  "requiredSystemPackages": ["qe-bgw-6.7.0-4.0"],
+  "requiredOutputFiles": ["output/bandstructure.dat", "output/eqp.dat", "output/eqp_q.dat", "output/absorption_eh.dat", "output/absorption_noeh.dat", "output/eigenvalues.dat", "output/eigenvalues_noeh.dat", "output/workflow.py", "output/run_manifest.json"],
+  "taxonomy": {"domain_id": "2", "domain_code": "physical_sciences", "subdomain_id": "2.2", "subdomain_code": "chemistry_materials", "subdomain_name": "Chemistry & Materials Computation"}
+}

@@ -1,0 +1,86 @@
+{
+  "taskId": "physical_sciences/ale_anchor_adapt_vqe_molecular_energy_adapt_vqe_molecular_ground_state_energy",
+  "title": "Site-resolved fixed-sector ADAPT-VQE molecular energy",
+  "summary": "Run reconstructable VQE/ADAPT-VQE for three site-resolved Jordan-Wigner molecular Hamiltonians and supply a reusable solver tested on two evaluator-only fields.",
+  "category": "physical_sciences",
+  "software": [
+    "Python 3.10.12",
+    "NumPy 2.2.6",
+    "SciPy 1.15.3",
+    "Bubblewrap"
+  ],
+  "taskPrompt": "Read base/input/problem_spec.md and the JSON inputs. Starting from the Jordan-Wigner Hartree-Fock determinant, run VQE/ADAPT-VQE with the documented physical singles/doubles pool, commutator-gradient selection, joint reoptimisation, and stopping rule. Write exactly base/output/results.json and base/output/solve.py, including reconstructable final parameters and per-iteration evidence. Exact diagonalisation is only a cross-check and is not an acceptable submitted method. The evaluator invokes solve.py on two unseen field configurations and independently reconstructs the ansatz. Use only Python, NumPy, and SciPy; do not modify input, inspect gated reference data, or use the network.",
+  "agentMustDo": [
+    "Validate and assemble all three Pauli Hamiltonians with the leftmost-character-is-qubit-0 convention.",
+    "Apply the site-resolved Z coefficients and identity shift in Hartree.",
+    "Prepare the Hartree-Fock state and implement canonical number-conserving single/double excitation generators.",
+    "Select maximum-magnitude commutator gradients, jointly reoptimise the growing ansatz, and meet the stopping rule.",
+    "Emit parameters and per-iteration gradients, parameter snapshots, energies, and state-derived number invariants.",
+    "Write output/results.json in the exact schema and units.",
+    "Write output/solve.py implementing the documented CLI so the evaluator can recompute two hidden field cases."
+  ],
+  "inputFiles": [
+    {
+      "name": "Problem specification",
+      "format": "Markdown",
+      "path": "input/problem_spec.md",
+      "description": "Full conventions, workflow, schemas, tolerances, restrictions, and CLI contract."
+    },
+    {
+      "name": "Visible field configuration",
+      "format": "JSON",
+      "path": "input/field_config.json",
+      "description": "Benchmark-authored site-resolved Z coefficients and unit conversion."
+    },
+    {
+      "name": "Molecular Hamiltonians",
+      "format": "JSON",
+      "path": "input/{h2_hamiltonian.json,lih_hamiltonian.json,beh2_hamiltonian.json}",
+      "description": "Frozen source Hamiltonians for H2, LiH, and BeH2."
+    }
+  ],
+  "referenceFiles": [
+    {
+      "name": "Visible result bundle",
+      "format": "JSON",
+      "path": "output/results.json",
+      "description": "Three tier results in Hartree/eV with particle-number invariants."
+    },
+    {
+      "name": "Reusable numerical solver",
+      "format": "Python",
+      "path": "output/solve.py",
+      "description": "CLI solver that the evaluator invokes on a hidden configuration."
+    }
+  ],
+  "evaluation": "The evaluator verifies frozen input hashes, runs solve.py in a network-disabled filesystem namespace on two hidden fields, reconstructs every submitted variational state, recomputes selection gradients/history energies/final energies/number invariants, and checks the ADAPT stopping rule. Weights: visible energy 0.25, unit consistency 0.10, metadata 0.05, number sector 0.10, ansatz evidence 0.20, hidden energies 0.30. An ansatz or hidden failure caps the score at 0.60. Energy tolerances are 1e-4 Ha (H2) and 1.6e-3 Ha (LiH/BeH2).",
+  "vm": {
+    "machineType": "c4-standard-4",
+    "snapshot": "cpu-free-ubuntu",
+    "timeout": 5400,
+    "vcpus": 4,
+    "memory_gb": 16,
+    "disk_gb": 20
+  },
+  "taxonomy": {
+    "domain_id": "2",
+    "domain_code": "physical_sciences",
+    "subdomain_id": "2.2",
+    "subdomain_code": "chemistry_materials",
+    "subdomain_name": "Chemistry & Materials Computation",
+    "classifier": {
+      "source": "task_all_workflows.csv",
+      "applied_at": "2026-05-28T20:12:46Z",
+      "previous": {
+        "domain_id": "9",
+        "domain_code": "computing_math",
+        "subdomain_id": "9.7",
+        "subdomain_code": "quantum",
+        "subdomain_name": "Quantum Computing"
+      }
+    }
+  },
+  "requiredSystemPackages": [
+    "bubblewrap"
+  ]
+}

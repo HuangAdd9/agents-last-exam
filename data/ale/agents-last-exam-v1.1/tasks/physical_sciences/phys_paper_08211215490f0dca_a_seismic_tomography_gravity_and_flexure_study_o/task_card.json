@@ -1,0 +1,81 @@
+{
+  "taskId": "physical_sciences/phys_paper_08211215490f0dca_a_seismic_tomography_gravity_and_flexure_study_o",
+  "title": "Jimmu Guyot Synthetic Straight-Ray P-Wave Tomography Surrogate",
+  "summary": "Derive rectangular-grid ray intersections from boundary endpoints, then recover a P-wave velocity surrogate from heteroscedastic active-source travel times and validate it on a hidden changed grid and ray geometry; this does not reproduce the paper's nonlinear joint inversion.",
+  "difficultyTarget": "last-exam",
+  "category": "physical_sciences",
+  "software": [
+    "Python 3",
+    "standard library only"
+  ],
+  "taskPrompt": "Read input/tomography_case.json, input/profile_geometry.json, and input/problem_spec.md. The problem specification is authoritative for formulas and tolerances. Implement the prescribed diagonally preconditioned steepest-descent weighted straight-ray P-wave tomography solver with exact quadratic line search for the supplied grid (do not assume a fixed size), using km, seconds, km/s, and s/km. First derive each path-length row from source/receiver boundary coordinates by deterministic rectangular segment clipping, and independently compare that derivation with the staged path vector; do not consume arbitrary sensitivity coefficients. Write only output/model.json, output/trace.csv, output/report.json, and a reusable output/tomography_solver.py accepting --input CASE.json --output DIR. model.json must have exact keys grid, velocity_km_s, slowness_s_per_km, rms_s, ray_predictions_s with dimensions taken from CASE; trace.csv must include iteration,objective,rms_s,step and row-major s_0...s_{n-1} state columns, with at least four recomputed consecutive non-increasing finite objective rows; report.json keys are method,units,case_id,invariant. Use uncertainty_s as weights, positive velocities, a small ridge prior, no network, and standard-library Python only. The evaluator reruns the solver on a hidden changed grid, endpoints, crossing-cell geometry, ray count, and uncertainties. This is a bounded synthetic surrogate for the paper's P-wave observable, not its full nonlinear joint inversion.",
+  "agentMustDo": [
+    "Read input/tomography_case.json, input/profile_geometry.json, and input/problem_spec.md.",
+    "Implement an iterative weighted tomography solver and a reusable tomography_solver.py CLI.",
+    "Write model.json, trace.csv, report.json, and tomography_solver.py only under output/.",
+    "Use km, seconds, km/s, and s/km consistently; validate forward predictions and an independent RMS invariant."
+  ],
+  "inputFiles": [
+    {
+      "name": "Reduced travel-time case",
+      "format": "JSON",
+      "path": "input/tomography_case.json",
+      "description": "Visible multi-cell straight-ray P-wave travel-time picks."
+    },
+    {
+      "name": "OBS profile geometry excerpt",
+      "format": "JSON",
+      "path": "input/profile_geometry.json",
+      "description": "CC-BY PANGAEA station coordinates and elevations used as provenance context."
+    },
+    {
+      "name": "Source metadata excerpt",
+      "format": "text",
+      "path": "input/source_metadata_excerpt.txt",
+      "description": "Paper/data provenance and license note."
+    },
+    {
+      "name": "Hashed PANGAEA source metadata",
+      "format": "TSV",
+      "path": "input/pangaea_941101_source.tsv",
+      "description": "Verbatim CC-BY PANGAEA metadata retrieved from the DOI URL; SHA-256 is recorded in GENERATION_MANIFEST.json."
+    },
+    {
+      "name": "Tomography problem specification",
+      "format": "Markdown",
+      "path": "input/problem_spec.md",
+      "description": "Authoritative forward model, weighted-ridge objective, indexing, and validation tolerances."
+    }
+  ],
+  "referenceFiles": [
+    {
+      "name": "Evaluator hidden changed case",
+      "format": "JSON",
+      "path": "reference/hidden_case.json",
+      "description": "Changed ray geometry and synthetic times, evaluator-only."
+    },
+    {
+      "name": "Reference outputs",
+      "format": "JSON/CSV",
+      "path": "reference/hidden_reference/*",
+      "description": "Oracle outputs, evaluator-only."
+    }
+  ],
+  "evaluation": "Hard gates independently validate every submitted forward prediction, RMS, velocity/slowness reciprocal, case/grid identity, units, weighted-ridge objective, and every intermediate slowness state/step in the auditable iterative trace against the input case. The visible model contributes 0.20*exp(-velocity_RMSE/0.20). The evaluator runs the reusable solver on a changed hidden case in an isolated directory containing only that case (hidden references are computed privately by the evaluator); hidden velocity RMSE contributes 0.50*exp(-RMSE/0.12), hidden forward-prediction RMSE contributes 0.25*exp(-RMSE/0.03), and hidden RMS agreement contributes 0.05*exp(-abs(delta_RMS)/0.01). Missing or failed hidden recomputation contributes zero. Passing threshold is 0.70.",
+  "vm": {
+    "machineType": "c4-standard-2",
+    "snapshot": "cpu-free-ubuntu",
+    "vcpus": 2,
+    "memory_gb": 4,
+    "disk_gb": 10,
+    "timeout_s": 5400
+  },
+  "taxonomy": {
+    "domain_id": "2",
+    "domain_code": "physical_sciences",
+    "subdomain_id": "2.4",
+    "subdomain_code": "geophysics_seismology",
+    "subdomain_name": "Geophysics & Seismology"
+  },
+  "requiredSystemPackages": []
+}

@@ -1,0 +1,13 @@
+{
+  "taskId":"physical_sciences/phys_paper_30c3c559c4ab8bd3_imaging_the_seismic_velocity_structure_of_the_cr",
+  "title":"Period-dependent covariance-weighted Rayleigh-wave tomography",
+  "summary":"Implement an iterative damped inversion with period-specific normalized kernels, heterogeneous data/model covariance, a prior model, and hidden changed geometry and dimensions.",
+  "category":"physical_sciences",
+  "software":["Python 3.10.12 (/usr/bin/python3)","NumPy 2.2.6"],
+  "taskPrompt":"Read input/spec.md and implement its exact period-dependent iterative update. Derive all output dimensions from JSON, emit four arrays and exact diagnostics units, and run unchanged on evaluator-only hidden inputs.",
+  "agentMustDo":["Read input/tomography_input.json","Implement reusable covariance-weighted iterative inversion in output/solve.py","Write output/result.npz and output/diagnostics.json","Handle differing period kernels and hidden dimensions"],
+  "inputFiles":[{"name":"tomography_input.json","format":"JSON","path":"input/tomography_input.json","description":"Synthetic period-dependent normalized kernels, observations, variances, prior, and damping parameters."},{"name":"spec.md","format":"Markdown","path":"input/spec.md","description":"Exact iterative objective, ordering, units, and output contract."}],
+  "referenceFiles":[{"name":"hidden_case.json","format":"JSON","path":"reference/hidden_case.json","description":"Changed period kernels with oblique rays, heterogeneous model/data covariance, observations, and damping."},{"name":"hidden_dimensions_case.json","format":"JSON","path":"reference/hidden_dimensions_case.json","description":"Changed grid, period count, ray count, kernels, covariance, and regularization."}],
+  "evaluation":"The evaluator executes solve.py on visible input, then on both hidden inputs, and compares all four arrays and diagnostics to an independent oracle. Components are visible 0.35, diagnostics 0.15, positive-physical invariant 0.15, and hidden recomputation 0.35.",
+  "vm":{"machineType":"c4-standard-4","snapshot":"cpu-free-ubuntu","timeout":1800,"vcpus":4,"memory_gb":8,"disk_gb":20},"taxonomy":{"domain_id":"2","domain_code":"physical_sciences","subdomain_id":"2.1","subdomain_code":"earth_and_environmental_sciences","subdomain_name":"Earth and Environmental Sciences"},"requiredSystemPackages":[]
+}

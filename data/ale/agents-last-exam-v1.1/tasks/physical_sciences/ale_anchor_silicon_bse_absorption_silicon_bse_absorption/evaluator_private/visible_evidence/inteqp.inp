@@ -1,0 +1,7 @@
+number_val_bands_coarse 4
+number_val_bands_fine 4
+number_cond_bands_coarse 4
+number_cond_bands_fine 4
+no_symmetries_coarse_grid
+no_symmetries_fine_grid
+use_momentum

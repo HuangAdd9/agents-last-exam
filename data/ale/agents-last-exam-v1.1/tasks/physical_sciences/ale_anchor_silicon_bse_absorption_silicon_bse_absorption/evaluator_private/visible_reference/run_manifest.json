@@ -1,0 +1,121 @@
+{
+  "case": {
+    "bands": 41,
+    "ecutwfc_ry": 10.0,
+    "energy_resolution_ev": 0.15,
+    "epsilon_cutoff_ry": 10.0,
+    "kgrid": 5,
+    "lattice_scale": 1.0,
+    "qshift": 0.002,
+    "screening_bands": 27,
+    "sigma_bands": 23
+  },
+  "input_sha256": {
+    "case": "e8fed976dcd16c2a5f63b74b570c03c109c7f7ead90866bc28a9b854f0c0f9e1",
+    "pseudo": "cf45fa0307f1ebf4607f8db8a6b8419f7eb3b912f0577f76920a81e2dcd88fd1",
+    "structure": "52216f82b1e798306ee60ed7def025129b7792068c98d48e32b4775ed0d43d9c"
+  },
+  "outputs": {
+    "absorption_eh.dat": "cb7cc2582359a034594284f37b17eea1021193558d734cb104418234acd3320e",
+    "absorption_noeh.dat": "5e43070735c1aae98e84804fb9bf0f0738aa6a82c4c5512bb5dcd2c25e37538b",
+    "bandstructure.dat": "5c8661c25a0da0f65498ac3d003cedce631d3ebe754a76ef08ae0a4055ac170c",
+    "eigenvalues.dat": "56e7a33ab1c87ca71f0f9d8cebc78e6d3afa5f3b5dcdb375b594815b8735df27",
+    "eigenvalues_noeh.dat": "718d4d067131a7624dd5919ce0840d3781cd67e5d8bd1230167d17dbd3011ebc",
+    "eqp.dat": "fc112d95132df66fb621604a0aadf98aa5d2ebd7a955e861b893160c02d40c12",
+    "eqp_q.dat": "fc112d95132df66fb621604a0aadf98aa5d2ebd7a955e861b893160c02d40c12"
+  },
+  "runtime_image": "ale/base-physical-qe-bgw:6.7.0-4.0-20260920",
+  "schema_version": 2,
+  "stages": [
+    {
+      "deck": "scf.in",
+      "deck_sha256": "7d4403166da6298f30f36703bba2ce5dd139aa157668e49cfd1c7ae0d71d1f08",
+      "executable": "pw.x",
+      "log": "pw_scf.log",
+      "log_sha256": "e6c9337234ecf342b02bec6f39b10acc8deddd357a14d605df348b76e30fb209",
+      "return_code": 0,
+      "stage": "pw_scf"
+    },
+    {
+      "deck": "wfn.in",
+      "deck_sha256": "baa702788d569ec4ecea147caf57a8ff2971dc2d05cd5328ee3d1f42cfbf127a",
+      "executable": "pw.x",
+      "log": "pw_wfn.log",
+      "log_sha256": "816ba8ac8d7065590326d585fa0bcb10ab3b0e67787fc2bb42301ec29a9053f8",
+      "return_code": 0,
+      "stage": "pw_wfn"
+    },
+    {
+      "deck": "wfn.pp.in",
+      "deck_sha256": "491d62fb3ce6548762862a6938110e6cf855ea0639166e5c07ab98920b88b89f",
+      "executable": "pw2bgw.x",
+      "log": "pw2bgw_wfn.log",
+      "log_sha256": "c95f9f8f12c81d483d8509752a910f6f163f9b80fecee7e3016db22e32803b32",
+      "return_code": 0,
+      "stage": "pw2bgw_wfn"
+    },
+    {
+      "deck": "wfnq.in",
+      "deck_sha256": "e38ae00736d821499a9cab32167d1063686a5ea6b1d229b56d78f122fed798db",
+      "executable": "pw.x",
+      "log": "pw_wfnq.log",
+      "log_sha256": "a98dd3f77b236127d44e07d1143aed0c307aca65a74f29f82b564e0692b2ac77",
+      "return_code": 0,
+      "stage": "pw_wfnq"
+    },
+    {
+      "deck": "wfnq.pp.in",
+      "deck_sha256": "2f7993626816a578be170591b1dcee3d0c26d997aa7ac4d7cb1f72bc5304d92a",
+      "executable": "pw2bgw.x",
+      "log": "pw2bgw_wfnq.log",
+      "log_sha256": "572b45a292288c1d2b386725368b318a52b36e0ced832a142328f2e72900c58c",
+      "return_code": 0,
+      "stage": "pw2bgw_wfnq"
+    },
+    {
+      "deck": "epsilon.inp",
+      "deck_sha256": "3d4e8ecdd5d359a5e2e8862f49a70fa926a088c3dad13ca14f26a331580096fb",
+      "executable": "epsilon.cplx.x",
+      "log": "epsilon.log",
+      "log_sha256": "bd6d31677b4a30471158288d5148cfb7be65a0c14db081a63979eec00e91a2c2",
+      "return_code": 0,
+      "stage": "epsilon"
+    },
+    {
+      "deck": "sigma.inp",
+      "deck_sha256": "fb7a15617d95339e11ea910546a87680446f7523ea4e0df0b895d9924bf64156",
+      "executable": "sigma.cplx.x",
+      "log": "sigma.log",
+      "log_sha256": "e104d9aeb6f6a3e5130e26f490d1463e645abddd65130ed9b82d6609a3a237e3",
+      "return_code": 0,
+      "stage": "sigma"
+    },
+    {
+      "deck": "kernel.inp",
+      "deck_sha256": "daadb38813051bb1eb1f0122a1f1803bef55918ada9c1deaf0eed47be31658fd",
+      "executable": "kernel.cplx.x",
+      "log": "kernel.log",
+      "log_sha256": "25198032c3c0bf2a7126adb2f4c3a1d6948b5bb42bf47c809859efe7dd297e28",
+      "return_code": 0,
+      "stage": "kernel"
+    },
+    {
+      "deck": "absorption.inp",
+      "deck_sha256": "a79293bc60017e162d41520caa5e4c703686f8029a28143fd7e83188a63a1335",
+      "executable": "absorption.cplx.x",
+      "log": "absorption.log",
+      "log_sha256": "77899c0420625b2262c4b1df8fe46a4eb9c4849de6d89f8b75fd2537fc8e93c4",
+      "return_code": 0,
+      "stage": "absorption"
+    },
+    {
+      "deck": "inteqp.inp",
+      "deck_sha256": "f19a92efd8284e47c86520a86739c3a2683de68e9f0a278215f7e3f4084026d0",
+      "executable": "inteqp.cplx.x",
+      "log": "inteqp.log",
+      "log_sha256": "fb2920a94d5e5dac42d204efee1ed9a9788fcf6e0dc4bb9725de06bea52e6cbd",
+      "return_code": 0,
+      "stage": "inteqp"
+    }
+  ]
+}

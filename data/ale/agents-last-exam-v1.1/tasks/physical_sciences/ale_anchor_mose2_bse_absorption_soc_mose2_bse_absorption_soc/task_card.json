@@ -1,0 +1,96 @@
+{
+  "taskId": "physical_sciences/ale_anchor_mose2_bse_absorption_soc_mose2_bse_absorption_soc",
+  "title": "MoSe2 SOC GW-BSE optical response (QE/BerkeleyGW)",
+  "summary": "Reproduce the SOC-enabled Quantum ESPRESSO to BerkeleyGW GW-BSE optical response of monolayer MoSe2 from staged structure and pseudopotentials.",
+  "category": "physical_sciences",
+  "software": [
+    "Python 3.10",
+    "Quantum ESPRESSO 6.7MaX",
+    "Open MPI 4.1.6",
+    "BerkeleyGW 4.0"
+  ],
+  "taskPrompt": "Read input/problem_spec.md and run the pinned QE/BerkeleyGW workflow. Create explicit SCF/NSCF, epsilon, sigma, kernel, and absorption decks, execute them with SOC/noncollinear settings and 2D Coulomb truncation, and write exactly the four required files under output/.",
+  "agentMustDo": [
+    "Read staged MoSe2.vasp and both SOC UPFs.",
+    "Create and execute QE SCF and noncollinear SOC NSCF decks.",
+    "Run pw2bgw, epsilon.cplx.x, sigma.cplx.x, kernel.cplx.x, and absorption.cplx.x with 2D truncation.",
+    "Use 16x16x1 mean-field sampling, about 2500 GW summation bands, 25 Ry screened cutoff, and 32x32x1 BSE interpolation.",
+    "Render the four required output files from the actual band and absorption data."
+  ],
+  "inputFiles": [
+    {
+      "name": "MoSe2 structure",
+      "format": "VASP",
+      "path": "input/MoSe2.vasp"
+    },
+    {
+      "name": "Mo SOC pseudopotential",
+      "format": "UPF",
+      "path": "input/Mo.soc.upf"
+    },
+    {
+      "name": "Se SOC pseudopotential",
+      "format": "UPF",
+      "path": "input/Se.soc.upf"
+    },
+    {
+      "name": "workflow specification",
+      "format": "Markdown",
+      "path": "input/problem_spec.md"
+    },
+    {
+      "name": "pinned runtime manifest",
+      "format": "JSON",
+      "path": "input/runtime_manifest.json"
+    }
+  ],
+  "referenceFiles": [
+    {
+      "name": "MoSe2 outputs",
+      "format": "mixed",
+      "path": "output/*"
+    }
+  ],
+  "evaluation": "Hard gates require all four non-empty outputs, valid PNG signatures, finite band/spectrum tables, and workflow metadata proving QE SCF/NSCF, BerkeleyGW epsilon/sigma/kernel/absorption, SOC/noncollinear flags, 2D Coulomb truncation, 16x16x1 sampling, 2500 GW bands, 25 Ry cutoff, and 32x32x1 BSE grid. The scorer independently extracts band-edge coincidence, valence SOC splitting, direct gap, excitonic peak separation, and normalized electron-hole spectrum after interpolation. Fabricated/static spectra, missing stages, omitted SOC, omitted 2D truncation, or visible-copy outputs fail. Scientifically equivalent BerkeleyGW grids and column representations are accepted.",
+  "vm": {
+    "machineType": "c4-standard-16",
+    "snapshot": "cpu-free-ubuntu",
+    "image": "ale/base-physical-qe-bgw:6.7.0-4.0-20260920",
+    "vcpus": 16,
+    "memory_gb": 32,
+    "disk_gb": 40,
+    "timeout_s": 14400
+  },
+  "taxonomy": {
+    "domain_id": "2",
+    "domain_code": "physical_sciences",
+    "subdomain_id": "2.2",
+    "subdomain_code": "chemistry_materials",
+    "subdomain_name": "Chemistry & Materials Computation",
+    "classifier": {
+      "model": "gpt-4o-mini",
+      "classified_at": "2026-05-13T09:33:54.408290Z",
+      "source": {
+        "submission_id": "(backfill: no submission lookup)",
+        "fields": [
+          "taskPrompt",
+          "title",
+          "summary",
+          "software"
+        ],
+        "mode": "backfill",
+        "task_card_path": "tasks/physical_sciences/mose2_bse_absorption_soc/task_card.json"
+      },
+      "rationale": "The task involves computational materials science focusing on optical response in materials."
+    }
+  },
+  "requiredSystemPackages": [
+    "qe-bgw-6.7.0-4.0"
+  ],
+  "requiredOutputFiles": [
+    "output/MoSe2_bands.dat.gnu",
+    "output/MoSe2_bands.png",
+    "output/absorption_eh.dat",
+    "output/exciton_absorption_spectra_avg.png"
+  ]
+}

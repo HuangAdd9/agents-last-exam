@@ -1,0 +1,21 @@
+{
+  "taskId": "computing_math/cf1305e_witness_recovery",
+  "category": "computing_math",
+  "title": "Score Distribution: Receipt Recovery",
+  "description": "接手报价服务的 receipt 改造。现有源码只输出最优报价，调用方还要达到报价的凭据。恢复导出中的现行协议，提交 output/src/main.cpp。",
+  "software": ["GNU C++17", "Python 3", "Bash"],
+  "inputFiles": [
+    {"name":"desk", "path":"input/desk", "format":"text", "description":"转发记录与旧提案"},
+    {"name":"src", "path":"input/src", "format":"C++17", "description":"报价端源码"},
+    {"name":"wire", "path":"input/wire", "format":"Python", "description":"消费端片段"},
+    {"name":"ops", "path":"input/ops", "format":"text", "description":"部署配置与验收批次"},
+    {"name":"captures", "path":"input/captures", "format":"text", "description":"不同端点的抓包"},
+    {"name":"attic", "path":"input/attic", "format":"text", "description":"旧附件"}
+  ],
+  "referenceFiles": [{"name":"main.cpp", "path":"output/src/main.cpp", "format":"C++17", "description":"候选源文件"}],
+  "agentMustDo": ["恢复现行消费协议", "扩展报价程序以输出最优值与见证", "交付自包含 C++17 源文件"],
+  "evaluation": "公开 ops/gates.csv 的 A-F 六组，权重 10/15/20/20/25/10；组内全部合法请求通过才得分。独立性质 checker 校验报价、数组长度、值域、严格递增和实际 balance。环境与评分器故障报错。",
+  "variants": ["base"],
+  "vm": {"snapshot":"cpu-free-ubuntu", "os":"linux", "vcpus":4, "memory_gb":8, "disk_gb":30, "timeout_s":18000},
+  "requiredSystemPackages": ["g++", "python3"]
+}
