@@ -1,0 +1,46 @@
+{
+  "taskId": "visual_media/toycar_inverse_graphics",
+  "title": "Toy Car Inverse Graphics",
+  "summary": "Recover the geometry of a customized miniature car, glazing, and draped display from five calibrated images.",
+  "category": "visual_media",
+  "pass_threshold": 0.75,
+  "software": ["Blender 4.0.2", "Python 3"],
+  "taxonomy": {
+    "domain_id": "8",
+    "domain_code": "visual_media",
+    "subdomain_id": "8.1",
+    "subdomain_code": "animation_3d",
+    "subdomain_name": "3D, Animation & Interactive Media"
+  },
+  "taskPrompt": "Reconstruct the customized miniature-car display shown in the five calibrated diagnostic images under `input/views/`. Recover the car body and trim, glazing, wheels, and the irregular draped fabric beneath it in the supplied world coordinate frame. The images depict the actual target geometry; a stock toy-car asset, even if visually similar, will not match its dimensions, panel profile, or fabric folds without modification. Read `input/RECONSTRUCTION_BRIEF.md` and `input/public_cameras.json` for the scale and camera contract. Submit a self-contained binary glTF at `output/reconstructed_scene.glb` and a short `output/reconstruction_report.md` describing your geometry construction and scale checks. Do not alter files under `input/`.",
+  "agentMustDo": [
+    "Use all five calibrated views to align geometry in world coordinates.",
+    "Recover the customized front/rear body profile, wheels, glazing, and non-boxlike fabric folds.",
+    "Export real 3D mesh surfaces in a self-contained GLB, not camera-facing cards.",
+    "Write a concise report of modeling choices, scale checks, and remaining mismatch."
+  ],
+  "inputFiles": [
+    {"name": "Five diagnostic views", "path": "input/views/", "format": "640x480 PNG", "description": "Camera001, Camera002, Camera004, Camera006, and Camera007 of the customized scene."},
+    {"name": "Public camera calibration", "path": "input/public_cameras.json", "format": "JSON", "description": "Perspective intrinsics and camera-to-world transforms for the five views."},
+    {"name": "Reconstruction brief", "path": "input/RECONSTRUCTION_BRIEF.md", "format": "Markdown", "description": "Coordinate frame, approximate dimensions, component scope, and deliverables."}
+  ],
+  "deliverables": [
+    {"path": "output/reconstructed_scene.glb", "description": "Self-contained target reconstruction in the supplied world coordinates."},
+    {"path": "output/reconstruction_report.md", "description": "Brief modeling, scale, and limitation notes."}
+  ],
+  "constraints": [
+    "Do not replace geometry with billboards or view-dependent image planes.",
+    "The GLB must import into Blender without missing external files.",
+    "Mesh topology, object names, partitions, and materials are unrestricted.",
+    "Diagnostic colors distinguish parts; photorealistic material matching is not required."
+  ],
+  "evaluation": "Geometry is imported in Blender and compared with a withheld complete scene. The score combines area-weighted symmetric surface distance, metric bounds, three held-out silhouettes, geometry validity, and report presence. Public-view-only cards, unmodified lookalike assets, missing components, extra geometry, and wrong scale lose credit.",
+  "vm": {
+    "snapshot": "cpu-free-ubuntu",
+    "vcpus": 4,
+    "memory_gb": 8,
+    "disk_gb": 20,
+    "timeout": 7200
+  },
+  "requiredSystemPackages": ["blender", "python3", "python3-numpy", "python3-pil"]
+}
