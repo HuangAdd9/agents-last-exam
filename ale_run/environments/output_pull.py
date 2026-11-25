@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import errno
 import logging
+import math
 import os
 import shlex
 import shutil
@@ -30,6 +31,7 @@ logger = logging.getLogger(__name__)
 # RPCs, not the payload size.
 _PULL_CONCURRENCY = 8
 _OUTPUT_PULL_TIMEOUT_S = 180
+_DOCKER_COPY_TIMEOUT_S = 3600
 _DEPENDENCY_DIRS = frozenset({'.git', '.venv', 'venv', 'node_modules', '__pycache__',
                               '.cache', '.conda', 'site-packages', '.flash_runtime',
                               '.pytest_cache', '.mypy_cache'})
@@ -115,7 +117,16 @@ async def _pull_via_docker_cp(
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    _, err = await proc.communicate()
+    try:
+        _, err = await asyncio.wait_for(proc.communicate(), timeout=_DOCKER_COPY_TIMEOUT_S)
+    except (TimeoutError, asyncio.CancelledError):
+        if proc.returncode is None:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+        await proc.communicate()
+        raise
     if proc.returncode != 0:
         raise RuntimeError(
             f"docker cp {container}:{src} -> {dest_dir} failed "
@@ -201,31 +212,29 @@ async def _pull_via_qemu_share(
     else:
         raise ValueError(f"unknown QEMU output transport: {transport!r}")
 
-    result = await sandbox.run_command(command, timeout=_QEMU_SHARE_COPY_TIMEOUT_S)
-    if result.returncode == 44:
-        return {"skipped": True, "reason": "empty_or_missing", "vm_path": src}
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"QEMU shared output copy failed (rc={result.returncode}): "
-            f"{(result.stderr or result.stdout or '')[:300]}"
-        )
+    try:
+        result = await sandbox.run_command(command, timeout=_QEMU_SHARE_COPY_TIMEOUT_S)
+        if result.returncode == 44:
+            return {"skipped": True, "reason": "empty_or_missing", "vm_path": src}
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"QEMU shared output copy failed (rc={result.returncode}): "
+                f"{(result.stderr or result.stdout or '')[:300]}"
+            )
 
-    await asyncio.to_thread(_promote_qemu_output, staged_dir, dest_dir)
-    files, total_bytes = await asyncio.to_thread(_count_output_files, dest_dir)
-    logger.info(
-        "pull_to_host(qemu share): %s → %s (files=%d bytes=%d)",
-        src,
-        dest_dir,
-        files,
-        total_bytes,
-    )
-    return {
-        "transport": "qemu-share",
-        "vm_path": src,
-        "files": files,
-        "bytes": total_bytes,
-        "errors": [],
-    }
+        await asyncio.to_thread(_promote_qemu_output, staged_dir, dest_dir)
+        files, total_bytes = await asyncio.to_thread(_count_output_files, dest_dir)
+        logger.info(
+            "pull_to_host(qemu share): %s → %s (files=%d bytes=%d)",
+            src, dest_dir, files, total_bytes,
+        )
+        return {
+            "transport": "qemu-share", "vm_path": src,
+            "files": files, "bytes": total_bytes, "errors": [],
+        }
+    finally:
+        if staged_dir.exists():
+            await asyncio.to_thread(shutil.rmtree, staged_dir)
 
 
 async def pull_to_host(
@@ -234,133 +243,118 @@ async def pull_to_host(
     *,
     dest_dir: Path,
 ) -> dict[str, Any]:
-    """Bound best-effort output collection; never hold a saved trajectory hostage."""
+    """Try local bulk copies first, then collect over CUA with a total budget.
+
+    ``ALE_OUTPUT_PULL_TIMEOUT_S`` bounds CUA listing and all file downloads,
+    including fallback from Docker/QEMU. Dependency filtering is opt-in via
+    ``ALE_OUTPUT_PULL_EXCLUDE_DEPENDENCIES=1`` and applies to CUA only.
+    """
+    src = _output_dir(sandbox, task_data)
     if os.environ.get("ALE_OUTPUT_PULL_EXTERNAL") == "developer-stage":
         return {"skipped": True, "reason": "provider_developer_artifact_staging",
-                "transport": "developer-stage", "vm_path": _output_dir(sandbox, task_data)}
-    # Local docker cp / QEMU share copy have their own transport lifecycle; the
-    # short budget addresses the remote per-file cua bottleneck only.
-    if _docker_container(sandbox) or _qemu_exchange(sandbox):
-        return await _pull_to_host(sandbox, task_data, dest_dir=dest_dir)
+                "transport": "developer-stage", "vm_path": src}
     budget = float(os.environ.get("ALE_OUTPUT_PULL_TIMEOUT_S", _OUTPUT_PULL_TIMEOUT_S))
-    if budget <= 0:
-        raise ValueError("ALE_OUTPUT_PULL_TIMEOUT_S must be positive")
-    try:
-        async with asyncio.timeout(budget):
-            return await _pull_to_host(sandbox, task_data, dest_dir=dest_dir)
-    except TimeoutError:
-        files, size = _count_output_files(dest_dir)
-        return {"transport": "partial", "vm_path": _output_dir(sandbox, task_data),
-                "files": files, "bytes": size,
-                "errors": [{"error": f"output collection exceeded {budget:g}s; existing files retained"}]}
-
-
-async def _pull_to_host(
-    sandbox: SandboxHandle,
-    task_data: TaskDataSpec,
-    *,
-    dest_dir: Path,
-) -> dict[str, Any]:
-    """Copy the sandbox output tree into the host run directory."""
-    src = _output_dir(sandbox, task_data)
+    if not math.isfinite(budget) or budget <= 0:
+        raise ValueError("ALE_OUTPUT_PULL_TIMEOUT_S must be positive and finite")
 
     exchange = _qemu_exchange(sandbox)
     if exchange:
         try:
             return await _pull_via_qemu_share(
-                sandbox,
-                src,
-                exchange[0],
-                exchange[1],
-                exchange[2],
-                dest_dir,
+                sandbox, src, exchange[0], exchange[1], exchange[2], dest_dir,
             )
         except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "QEMU shared output pull failed, falling back to cua: %s",
-                exc,
-            )
+            logger.warning("QEMU shared output pull failed, falling back to cua: %s", exc)
 
-    entries = await sandbox.list_dir(src)
-    if not entries:
-        return {"skipped": True, "reason": "empty_or_missing", "vm_path": src}
-
-    # Local Docker sandbox: one host-side `docker cp` for the whole tree instead
-    # of the per-file cua transport below. Best-effort — fall back to cua on any
-    # failure so a docker quirk never loses output.
     container = _docker_container(sandbox)
     if container:
         try:
             return await _pull_via_docker_cp(container, src, dest_dir)
-        except Exception as e:  # noqa: BLE001
-            logger.warning("docker cp output pull failed, falling back to cua: %s", e)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("docker cp output pull failed, falling back to cua: %s", exc)
 
+    report = {"transport": "cua", "vm_path": src, "files": 0, "bytes": 0,
+              "errors": [], "excluded_dependency_entries": 0}
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + budget
+    try:
+        async with asyncio.timeout_at(deadline):
+            await _pull_to_host(sandbox, src, dest_dir, deadline, report)
+    except TimeoutError:
+        report["transport"] = "partial"
+        report["errors"].append({
+            "error": f"output collection exceeded {budget:g}s; completed files retained",
+        })
+    return report
+
+
+async def _pull_to_host(
+    sandbox: SandboxHandle,
+    src: str,
+    dest_dir: Path,
+    deadline: float,
+    report: dict[str, Any],
+) -> None:
+    """Collect CUA outputs and update counts only after each file commits."""
+    entries = await sandbox.list_dir(src)
+    if not entries:
+        report.update(skipped=True, reason="empty_or_missing")
+        return
     dest_dir.mkdir(parents=True, exist_ok=True)
     sep = "/" if sandbox.is_linux else "\\"
-
-    # Materialise the directory tree first (cheap, ordering-sensitive), then
-    # download the files concurrently — one slow/large file no longer blocks the
-    # rest, and many small files no longer serialise into a long tail.
+    exclude_dependencies = os.environ.get("ALE_OUTPUT_PULL_EXCLUDE_DEPENDENCIES") == "1"
     jobs: list[tuple[str, Path]] = []
-    excluded = 0
     for entry in entries:
         rel = entry["relpath"]
-        parts = Path(rel.replace("\\", "/")).parts
-        if any(p in _DEPENDENCY_DIRS or p.startswith('.venv') for p in parts):
-            excluded += 1
+        relative = Path(rel.replace("\\", "/"))
+        if relative.is_absolute() or ".." in relative.parts:
+            raise ValueError(f"Output listing contains a nonrelative path: {rel!r}")
+        directories = relative.parts if entry.get("is_dir") else relative.parts[:-1]
+        if exclude_dependencies and any(
+            part in _DEPENDENCY_DIRS or part.startswith(".venv") for part in directories
+        ):
+            report["excluded_dependency_entries"] += 1
             continue
         if entry.get("is_dir"):
-            (dest_dir / rel.replace("\\", "/")).mkdir(parents=True, exist_ok=True)
+            (dest_dir / relative).mkdir(parents=True, exist_ok=True)
             continue
         remote_path = f"{src.rstrip(sep)}{sep}{rel}"
-        local_path = dest_dir / rel.replace("\\", "/")
+        local_path = dest_dir / relative
         local_path.parent.mkdir(parents=True, exist_ok=True)
         jobs.append((remote_path, local_path))
 
     sem = asyncio.Semaphore(_PULL_CONCURRENCY)
 
-    async def _fetch(remote_path: str, local_path: Path) -> tuple[str, Path, bool]:
+    async def fetch(remote_path: str, local_path: Path) -> None:
         async with sem:
-            ok = await sandbox.download_to_local(
-                remote_path,
-                str(local_path),
-                timeout=120,
-            )
-        return remote_path, local_path, ok
-
-    results = await asyncio.gather(*(_fetch(rp, lp) for rp, lp in jobs))
-
-    files = 0
-    total_bytes = 0
-    errors: list[dict[str, str]] = []
-    for remote_path, local_path, ok in results:
-        if ok:
-            files += 1
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                raise TimeoutError("output collection budget exhausted")
             try:
-                total_bytes += local_path.stat().st_size
-            except OSError:
-                pass
-        else:
-            errors.append({"vm_path": remote_path, "error": "download_failed"})
-            marker = local_path.with_suffix(local_path.suffix + ".unreadable")
-            marker.write_text(f"vm_path={remote_path}\nreason=download_failed\n")
+                ok = await sandbox.download_to_local(
+                    remote_path, str(local_path), timeout=min(120, remaining),
+                )
+                if not ok:
+                    raise OSError("download_failed")
+                size = local_path.stat().st_size
+            except Exception as exc:  # noqa: BLE001
+                report["errors"].append({"vm_path": remote_path, "error": str(exc)})
+                marker = local_path.with_suffix(local_path.suffix + ".unreadable")
+                marker.write_text(f"vm_path={remote_path}\nreason=download_failed\n")
+                return
+            report["files"] += 1
+            report["bytes"] += size
 
-    logger.info(
-        "pull_to_host: %s → %s (files=%d bytes=%d errors=%d)",
-        src,
-        dest_dir,
-        files,
-        total_bytes,
-        len(errors),
-    )
-    return {
-        "transport": "cua",
-        "vm_path": src,
-        "files": files,
-        "bytes": total_bytes,
-        "errors": errors,
-        "excluded_dependency_entries": excluded,
-    }
+    tasks = [asyncio.create_task(fetch(remote, local)) for remote, local in jobs]
+    try:
+        await asyncio.gather(*tasks)
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+    logger.info("pull_to_host: %s → %s (files=%d bytes=%d errors=%d)",
+                src, dest_dir, report["files"], report["bytes"], len(report["errors"]))
 
 
 async def push_to_gcs(

@@ -36,12 +36,13 @@ import os
 import shlex
 import subprocess
 import tempfile
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path, PureWindowsPath
-from typing import Any, Iterable, Literal
+from typing import Any, Literal
 
+import httpx
 import requests
-
 
 OS = Literal["linux", "windows"]
 ReleaseMode = Literal["delete", "stop", "keep"]
@@ -79,13 +80,13 @@ class NetworkPolicy:
     Only meaningful when ``mode == "allowlist"``."""
 
     @classmethod
-    def from_card(cls, raw: Any) -> "NetworkPolicy":
+    def from_card(cls, raw: Any) -> NetworkPolicy:
         """Parse+validate a task-card ``vm.network`` object. ``None``/absent →
         ``open`` (backward compatible; existing cards need no changes)."""
         if raw is None:
             return cls()
         if not isinstance(raw, dict):
-            raise ValueError(
+            raise ValueError(  # noqa: TRY004
                 f"task_card vm.network must be an object, got {type(raw).__name__}"
             )
         mode = raw.get("mode", "open")
@@ -96,7 +97,7 @@ class NetworkPolicy:
             )
         raw_allow = raw.get("allow", ())
         if isinstance(raw_allow, str) or not isinstance(raw_allow, (list, tuple)):
-            raise ValueError(
+            raise ValueError(  # noqa: TRY004
                 "task_card vm.network.allow must be a list of hostname strings"
             )
         allow: list[str] = []
@@ -299,11 +300,48 @@ class SandboxHandle:
     async def download_to_local(
         self, remote_path: str, local_path: str, *, timeout: float = 60,
     ) -> bool:
-        """Download a sandbox-side file to HOST disk. Returns True on
-        success. Used by gather + incremental puller."""
-        return await asyncio.to_thread(
-            _download_to_local_sync, self, remote_path, local_path, timeout,
-        )
+        """Download atomically within a total budget; cancellation closes the RPC.
+
+        Incomplete downloads leave an existing destination unchanged and remove
+        their temporary file. No background thread can publish after cancellation.
+        """
+        target = Path(local_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary: Path | None = None
+        deadline = asyncio.get_running_loop().time() + timeout
+        if not self.is_linux:
+            remote_path = _windows_extended_path(remote_path)
+        try:
+            async with asyncio.timeout(timeout), httpx.AsyncClient(timeout=timeout) as client:
+                with tempfile.NamedTemporaryFile(
+                    dir=target.parent, prefix=".ale-download-", delete=False,
+                ) as stream:
+                    temporary = Path(stream.name)
+                    offset = 0
+                    while True:
+                        data = await _post_cmd_async(client, self, {
+                            "command": "read_bytes",
+                            "params": {"path": remote_path, "offset": offset,
+                                       "length": _DOWNLOAD_CHUNK_BYTES},
+                        })
+                        if not data.get("success"):
+                            return False
+                        block = base64.b64decode(data.get("content_b64", "") or "", validate=True)
+                        stream.write(block)
+                        offset += len(block)
+                        if len(block) < _DOWNLOAD_CHUNK_BYTES:
+                            break
+            # No await between the final deadline check and atomic publish.
+            if asyncio.get_running_loop().time() >= deadline:
+                return False
+            temporary.replace(target)
+            return True
+        except (OSError, ValueError, TimeoutError, httpx.HTTPError) as exc:
+            logger.debug("download_to_local failed for %s: %s", remote_path, exc)
+            return False
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
 
     async def download_range(
         self, remote_path: str, *, start: int, max_chunk_bytes: int,
@@ -470,6 +508,31 @@ def _post_cmd(sandbox: SandboxHandle, body: dict, *, timeout: float) -> dict[str
     except requests.RequestException as e:
         logger.debug("POST %s failed: %s", sandbox.cmd_url, e)
         return None
+
+
+async def _post_cmd_async(
+    client: httpx.AsyncClient, sandbox: SandboxHandle, body: dict,
+) -> dict[str, Any]:
+    """Read the first SSE result with cancellable network I/O and linear scanning."""
+    async with client.stream("POST", sandbox.cmd_url, json=body) as response:
+        response.raise_for_status()
+        buffer = bytearray()
+        scan = 0
+        async for chunk in response.aiter_bytes():
+            buffer.extend(chunk)
+            while True:
+                newline = buffer.find(b"\n", scan)
+                if newline < 0:
+                    scan = len(buffer)
+                    break
+                line = bytes(buffer[:newline]).rstrip(b"\r")
+                del buffer[:newline + 1]
+                scan = 0
+                if line.startswith(b"data:"):
+                    return json.loads(_strip_bom(line[5:].strip()))
+        if buffer.startswith(b"data:"):
+            return json.loads(_strip_bom(bytes(buffer[5:]).strip()))
+    raise ValueError("CUA response has no SSE result")
 
 
 def _run_remote_sync(
@@ -783,7 +846,7 @@ def _download_to_local_sync(
                 break
         Path(local_path).write_bytes(b"".join(parts))
         return True
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         logger.debug("download_to_local failed for %s: %s", remote_path, e)
         return False
 
@@ -867,7 +930,7 @@ def _parse_range_stdout(stdout: str, *, expected_start: int) -> RangeResult:
         return RangeResult(success=True, new_size=size, new_data=b"")
     try:
         new_data = base64.b64decode(b64_text or "")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return RangeResult(success=False, error=f"base64 decode failed: {e}")
     return RangeResult(success=True, new_size=size, new_data=new_data)
 
