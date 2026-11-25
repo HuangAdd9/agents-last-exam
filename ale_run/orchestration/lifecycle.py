@@ -20,32 +20,28 @@ Phase mapping (refined from simprun, surface renamed to LOG_SPEC events):
 from __future__ import annotations
 
 import asyncio
-from dataclasses import asdict, is_dataclass, replace
-import json
 import logging
 import signal
 import time
-import uuid
 from pathlib import Path
 from typing import Any
 
 from ..base_interface import (
     AgentRunResult,
     BaseExecutor,
-    SandboxSpec,
     Provider,
+    SandboxSpec,
     Trajectory,
     TrajectoryBuilder,
     persist_screenshots,
 )
 from ..environments.env import ALEEnv
 from ..executors import DockerExecutor, LocalExecutor, SandboxExecutor
-from ..tasks.loader import TaskLoader
 from ..tasks.driver import TaskDriver
-from ..tasks.revision import task_revision
+from ..tasks.loader import TaskLoader
+from .experiment_spec import ArtifactsSpec, RunUnit, UnitResult
 from .factory import EnvironmentRouter, build_config, resolve_agent
 from .run_writer import RunWriter, slug_task
-from .experiment_spec import ArtifactsSpec, RunUnit, UnitResult
 from .termination import classify_error, err_dict, redact_config
 
 logger = logging.getLogger(__name__)
@@ -61,44 +57,22 @@ _DEFAULT_TIMEOUT_S = 7200
 _EVAL_TIMEOUT_S = 7200
 
 
-def _append_prompt_suffix(
-    task_meta: dict[str, Any],
-    prompt_suffix: str,
-    *,
-    sandbox_metadata: dict[str, Any] | None = None,
-) -> None:
-    """Append experiment text and configured Docker ceilings to the task prompt.
+def _append_prompt_suffix(task_meta: dict[str, Any], prompt_suffix: str) -> None:
+    """Append the experiment-wide ``prompt_suffix`` to the task description.
 
-    Mutate the per-run description so the trajectory and every deployer
-    receive the same text. Other providers retain the suffix-only behavior.
+    No-op when the suffix is empty/whitespace. The suffix is added as its
+    own paragraph (blank-line separator) after the task prompt, mutating
+    *task_meta* in place so every downstream consumer — the recorded
+    trajectory and the prompt handed to the agent — sees the same text.
     """
-    suffixes = [prompt_suffix.strip()] if prompt_suffix and prompt_suffix.strip() else []
-    metadata = sandbox_metadata or {}
-    if metadata.get("provider") == "docker":
-        limits = metadata.get("resource_limits") or {}
-        cpu_quota = limits.get("cpu_quota", 0)
-        memory_bytes = limits.get("memory_limit_bytes", 0)
-        ceilings = []
-        if cpu_quota > 0:
-            ceilings.append(f"CPU quota {cpu_quota:g} CPU equivalents")
-        if memory_bytes > 0:
-            ceilings.append(
-                f"memory limit {memory_bytes / (1024 ** 3):g} GiB ({memory_bytes} bytes)"
-            )
-        if ceilings:
-            suffixes.append(
-                "Task sandbox configured per-container ceilings: "
-                + "; ".join(ceilings)
-                + ". These are not guaranteed free memory or exclusive CPU capacity. "
-                "All sandbox processes share these ceilings. In Docker, /proc, nproc, "
-                "os.cpu_count(), and free may report host resources rather than "
-                "container limits. Size worker pools and numerical-library threads "
-                "to these ceilings and leave memory headroom."
-            )
-    if not suffixes:
+    if not prompt_suffix or not prompt_suffix.strip():
         return
     description = task_meta.get("description", "") or ""
-    task_meta["description"] = "\n\n".join([description.rstrip(), *suffixes])
+    task_meta["description"] = f"{description.rstrip()}\n\n{prompt_suffix.strip()}"
+
+
+# Mount-fallback: how many provision attempts before we give up. Matches
+# simprun's single retry — the original env + one alternate profile.
 
 
 # ======================================================================
@@ -152,7 +126,7 @@ def install_signal_handlers() -> None:
 async def run_one_unit(
     *,
     unit: RunUnit,
-    router: "EnvironmentRouter",
+    router: EnvironmentRouter,
     output_root: Path,
     artifacts: ArtifactsSpec | None = None,
     sem: asyncio.Semaphore | None = None,
@@ -171,7 +145,7 @@ async def run_one_unit(
         deployer_cls, config_cls = resolve_agent(unit.agent_spec)
     except Exception as e:
         # We can't even open a RunWriter without knowing the model — bail.
-        logger.exception("resolve_agent failed for %s: %s", unit.slug, e)
+        logger.exception("resolve_agent failed for %s", unit.slug)
         return UnitResult(
             unit=unit,
             status="not_executed",
@@ -213,7 +187,6 @@ async def run_one_unit(
     trajectory: Trajectory | None = None
     run_result: AgentRunResult | None = None
     executor: BaseExecutor | None = None
-    host_artifacts_dir: Path | None = None
 
     status = "completed"
     score: float | None = None
@@ -223,8 +196,6 @@ async def run_one_unit(
     eval_status = "not_executed"
     eval_duration_s: float | None = None
     eval_error: dict[str, Any] | None = None
-    task_revision_value: str | None = None
-    environment_metadata: dict[str, Any] = {}
     # Execution window timestamps. ``started`` (above) is the ENQUEUE time, so
     # it includes the concurrency-semaphore wait. For the reported per-unit
     # duration we want the actual work window: from when the sem is acquired
@@ -243,8 +214,6 @@ async def run_one_unit(
         exec_started = time.monotonic()
         try:
             task_path = Path("tasks") / unit.task_path
-            task_revision_value = await asyncio.to_thread(task_revision, task_path)
-            writer.emit_event("task_revision", revision=task_revision_value)
             task_meta = TaskLoader(str(task_path)).load(unit.variant_index)
             env_spec = _build_env_spec(task_meta, unit=unit)
             timeout_s = int(wall_time_s or task_meta.get("timeout_s") or _DEFAULT_TIMEOUT_S)
@@ -262,21 +231,17 @@ async def run_one_unit(
             writer.emit_event("provision_started")
             env = ALEEnv(provider=provider, spec=env_spec)
             await env.reset_async()
-            environment_metadata = dict(env.sandbox.metadata.get("image_provenance") or {})
-            environment_metadata["snapshot"] = env_spec.snapshot
             writer.emit_event(
                 "provision_done",
                 env_id=env.sandbox.id,
                 machine_type=env.sandbox.metadata.get("machine_type"),
             )
 
-            _append_prompt_suffix(
-                task_meta, prompt_suffix, sandbox_metadata=env.sandbox.metadata,
-            )
+            _append_prompt_suffix(task_meta, prompt_suffix)
 
             builder = TrajectoryBuilder(
                 agent_name=getattr(config, "name", unit.agent_spec.class_),
-                agent_version=getattr(config, "cli_version", None),
+                agent_version=None,
                 model=config.model,
                 task_path=unit.task_path,
                 variant_index=unit.variant_index,
@@ -301,7 +266,6 @@ async def run_one_unit(
                 os_type=env.sandbox.os,
                 session_rebuilder=env.reset_session,
             )
-            eval_timeout_s = task_driver.evaluation_timeout_s or _EVAL_TIMEOUT_S
             await task_driver.setup()
 
             # ============================================================
@@ -311,7 +275,6 @@ async def run_one_unit(
             agent_name = getattr(config, "name", "agent")
             host_artifacts_dir = writer.run_dir / "origin_log" / agent_name
             host_artifacts_dir.mkdir(parents=True, exist_ok=True)
-            (host_artifacts_dir / "_cli_identity.json").unlink(missing_ok=True)
             executor = _build_executor(
                 executor_type=executor_type,
                 env=env,
@@ -319,7 +282,6 @@ async def run_one_unit(
                 agent_name=agent_name,
                 run_id=writer.run_id,
                 host_artifacts_dir=host_artifacts_dir,
-                sandbox_task_name=getattr(task_meta.get("task_data"), "sandbox_task_name", None),
             )
             writer.emit_event(
                 "agent_run_started",
@@ -337,9 +299,6 @@ async def run_one_unit(
             tail_task: asyncio.Task | None = None
             tail_targets: list[tuple[str, Path]] = []
             if isinstance(executor, SandboxExecutor):
-                executor.on_run_result = lambda result: writer.emit_event(
-                    "agent_run_result", **asdict(result),
-                )
                 hot = tuple(getattr(deployer_cls, "hot_artifacts", ()) or ())
                 if hot:
                     sep = "/" if env.sandbox.is_linux else "\\"
@@ -364,7 +323,6 @@ async def run_one_unit(
                         name="tail_hot_artifacts",
                     )
 
-            launch_error: BaseException | None = None
             try:
                 run_result = await asyncio.wait_for(
                     executor.run_deployer(
@@ -374,18 +332,15 @@ async def run_one_unit(
                     ),
                     timeout=timeout_s,
                 )
-            except asyncio.TimeoutError as launch_exc:
-                launch_error = launch_exc
+            except TimeoutError:
                 run_result = AgentRunResult(
                     status="timeout",
                     error=f"agent wall-budget exceeded after {timeout_s}s",
                     duration_s=float(timeout_s),
                 )
-            except asyncio.CancelledError as launch_exc:
-                launch_error = launch_exc
+            except asyncio.CancelledError:
                 raise
-            except Exception as launch_exc:
-                launch_error = launch_exc
+            except Exception as launch_exc:  # noqa: BLE001
                 import traceback as _tb
                 run_result = AgentRunResult(
                     status="failed",
@@ -394,62 +349,22 @@ async def run_one_unit(
                     duration_s=None,
                 )
             finally:
-                try:
-                    if run_result is not None and (
-                        not isinstance(executor, SandboxExecutor)
-                        or executor.last_run_result is None
-                    ):
-                        writer.emit_event("agent_run_result", **asdict(run_result))
-                    env.set_phase("agent_stop")
-                    await executor.stop_deployer()
-                    writer.emit_event("agent_stopped")
-                except BaseException as stop_exc:
-                    writer.emit_event(
-                        "agent_stop_failed", error=str(stop_exc),
-                        run_result=asdict(run_result) if run_result is not None else None,
-                        launch_error=err_dict(launch_error) if launch_error is not None else None,
-                    )
-                    if launch_error is not None and launch_error is not stop_exc:
-                        raise stop_exc from launch_error
-                    raise
-                finally:
-                    if tail_task is not None:
-                        stop_event.set()
-                        try:
-                            reconcile_err = await asyncio.wait_for(tail_task, timeout=120)
-                        except asyncio.TimeoutError:
-                            tail_task.cancel()
-                            reconcile_err = "tail reconcile wait timed out"
-                        if reconcile_err:
-                            writer.emit_event(
-                                "incremental_pull_final_failed", error=reconcile_err,
-                            )
-            launch_confirmed = True
-            launch_confirmation_error = None
-            if run_result.status in ("failed", "timeout"):
-                try:
-                    launch_confirmed = await _agent_launch_started(executor)
-                except (OSError, RuntimeError, ValueError, KeyError, TypeError) as exc:
-                    launch_confirmed = False
-                    launch_confirmation_error = f"{type(exc).__name__}: {exc}"
+                if tail_task is not None:
+                    stop_event.set()
+                    try:
+                        reconcile_err = await asyncio.wait_for(tail_task, timeout=120)
+                    except TimeoutError:
+                        tail_task.cancel()
+                        reconcile_err = "tail reconcile wait timed out"
+                    if reconcile_err:
+                        writer.emit_event(
+                            "incremental_pull_final_failed", error=reconcile_err,
+                        )
             writer.emit_event(
                 "agent_finished",
-                status=run_result.status if launch_confirmed else "failed",
+                status=run_result.status,
                 error=run_result.error,
-                launch_confirmed=launch_confirmed,
             )
-
-            recover_artifacts = getattr(deployer_cls, "recover_stopped_artifacts", None)
-            recovery_manifest = None
-            recovery_error = None
-            if (launch_confirmed and isinstance(executor, SandboxExecutor)
-                    and recover_artifacts is not None):
-                try:
-                    recovery_manifest = await recover_artifacts(env.sandbox, executor.work_dir)
-                    writer.emit_event("agent_artifact_recovery_done", status=run_result.status)
-                except Exception as exc:
-                    recovery_error = exc
-                    writer.emit_event("agent_artifact_recovery_failed", error=str(exc))
 
             # ============================================================
             # Phase 2b — post-launch gather (origin_log) via executor.gather_dir
@@ -477,22 +392,11 @@ async def run_one_unit(
                             "bytes": gather_report.bytes,
                         },
                     )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 writer.emit_event(
                     "origin_log_gather_failed",
                     report={"transport": "?", "files": 0, "error": str(e)},
                 )
-            if not launch_confirmed:
-                env.set_phase("agent_start")
-                detail = launch_confirmation_error or "launch marker absent"
-                raise RuntimeError(
-                    f"agent launch not confirmed; evaluation skipped ({detail}); "
-                    f"original result: {run_result.error or run_result.status}"
-                )
-            if recovery_error is not None:
-                raise RuntimeError("agent artifact recovery failed") from recovery_error
-            if recovery_manifest is not None:
-                deployer_cls.validate_recovered_artifacts(host_artifacts_dir, recovery_manifest)
             # ============================================================
             # Phase 3 — gather env output, stage reference, evaluate
             # ============================================================
@@ -509,8 +413,8 @@ async def run_one_unit(
 
             # 3b. STAGING_EVAL (simprun runner.py:_phase3_evaluate second half)
             #     Pull reference data from GCS to the env if the task needs
-            #     it for scoring. Backends explicitly report missing
-            #     reference data; real staging errors abort evaluation.
+            #     it for scoring. Best-effort: many tasks don't have a
+            #     reference/ prefix and we just log + continue.
             env.set_phase("stage_reference")
             await stage_reference(
                 env=env, provider=provider, artifacts=artifacts, task_meta=task_meta,
@@ -527,7 +431,7 @@ async def run_one_unit(
             exec_ended = eval_start
             try:
                 eval_out = await asyncio.wait_for(
-                    task_driver.evaluate(), timeout=eval_timeout_s,
+                    task_driver.evaluate(), timeout=_EVAL_TIMEOUT_S,
                 )
                 eval_duration_s = round(time.monotonic() - eval_start, 4)
                 if eval_out is None or eval_out.get("error"):
@@ -541,16 +445,16 @@ async def run_one_unit(
                 else:
                     eval_status = "success"
                     score = _extract_score(eval_out)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 eval_duration_s = round(time.monotonic() - eval_start, 4)
                 # Eval ran out of wall-clock — treat as a timeout (not a failure)
                 # so the unit status is "timeout" and resume skips it.
                 eval_status = "timeout"
                 eval_error = {
                     "type": "TimeoutError",
-                    "message": f"evaluate() exceeded {eval_timeout_s:g}s wall-clock",
+                    "message": f"evaluate() exceeded {_EVAL_TIMEOUT_S}s wall-clock",
                 }
-                logger.error("evaluate timed out after %gs for %s", eval_timeout_s, unit.slug)
+                logger.error("evaluate timed out after %ds for %s", _EVAL_TIMEOUT_S, unit.slug)
             except Exception as e:
                 eval_duration_s = round(time.monotonic() - eval_start, 4)
                 eval_status = "failed"
@@ -568,12 +472,7 @@ async def run_one_unit(
                         run_result=run_result,
                         builder=builder,
                     )
-                except Exception as e:
-                    if recovery_manifest is not None:
-                        score = None
-                        eval_status = "failed"
-                        eval_error = err_dict(e)
-                        raise RuntimeError("recovered artifact parsing failed") from e
+                except Exception as e:  # noqa: BLE001
                     logger.warning("parse_artifacts failed for %s: %s", unit.slug, e)
                     builder.add_step(
                         source="system",
@@ -581,7 +480,13 @@ async def run_one_unit(
                         extra={"reason": "parse_error"},
                     )
 
-                traj_status = _trajectory_status(run_result.status, eval_status)
+                traj_status = (
+                    "completed"
+                    if run_result.status == "completed"
+                    else "timeout"
+                    if run_result.status == "timeout"
+                    else "failed"
+                )
                 trajectory = builder.finalize(reward=score, status=traj_status)
                 # Move inline base64 screenshots to <run_dir>/screenshots/NNNN.png
                 # and rewrite refs to relative-path form BEFORE serialising —
@@ -590,18 +495,14 @@ async def run_one_unit(
                     n_shots = persist_screenshots(trajectory, writer.run_dir)
                     if n_shots:
                         writer.emit_event("screenshots_persisted", count=n_shots)
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001
                     logger.warning("persist_screenshots failed for %s: %s", unit.slug, e)
                 writer.write_trajectory(trajectory)
 
             # ============================================================
             # Lifecycle status promotion (LOG_SPEC §4)
             # ============================================================
-            if eval_status == "failed":
-                status = "failed"
-                error_str = (eval_error or {}).get("message", "evaluation failed")
-                error_obj = eval_error
-            elif run_result is not None and run_result.status == "timeout":
+            if run_result is not None and run_result.status == "timeout":
                 status = "timeout"
                 error_str = run_result.error
             elif run_result is not None and run_result.status == "failed":
@@ -616,14 +517,14 @@ async def run_one_unit(
                 status = "timeout"
                 error_str = (eval_error or {}).get("message", "evaluation timed out")
                 error_obj = eval_error
+            elif eval_status == "failed":
+                status = "failed"
+                error_str = (eval_error or {}).get("message", "evaluation failed")
+                error_obj = eval_error
             else:
                 status = "completed"
 
-            phase = (
-                "agent_run" if status == "timeout" and run_result is not None
-                and run_result.status == "timeout"
-                else env.current_phase if status != "completed" else None
-            )
+            phase = env.current_phase if status != "completed" else None
 
         finally:
             if sem is not None:
@@ -660,12 +561,12 @@ async def run_one_unit(
         if task_driver is not None:
             try:
                 await task_driver.close()
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 logger.debug("TaskDriver.close failed: %s", e)
         if env is not None:
             try:
                 await env.close_async(mode=effective_cleanup_mode)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 logger.debug("ALEEnv.close_async failed: %s", e)
 
     # Reported duration = actual execution window (sem-acquired → eval start),
@@ -685,19 +586,6 @@ async def run_one_unit(
         error=eval_error,
     )
 
-    cli_identity: dict[str, Any] = {}
-    if host_artifacts_dir is not None:
-        try:
-            loaded = json.loads((host_artifacts_dir / "_cli_identity.json").read_text())
-            if isinstance(loaded, dict):
-                version = loaded.get("cli_version")
-                source = loaded.get("source")
-                cli_identity = {
-                    "cli_version": version if isinstance(version, str) else None,
-                    "source": source if isinstance(source, str) and source in {"official", "fork", "custom"} else None,
-                }
-        except (OSError, ValueError):
-            pass
     run_meta = _build_run_meta(
         run_id=writer.run_id,
         unit=unit,
@@ -711,9 +599,6 @@ async def run_one_unit(
         total_s=total_s,
         trajectory=trajectory,
         category=_category_from_error(error_str),
-        task_revision_value=task_revision_value,
-        environment=environment_metadata,
-        cli_identity=cli_identity,
     )
     writer.write_run_json(run_meta)
 
@@ -742,28 +627,6 @@ async def run_one_unit(
 # ======================================================================
 
 
-async def _agent_launch_started(executor: BaseExecutor) -> bool:
-    """Confirm that this executor's deployer passed installation and started launch."""
-    if isinstance(executor, SandboxExecutor):
-        sep = "/" if executor.sandbox.is_linux else "\\"
-        path = f"{executor.work_dir.rstrip(sep)}{sep}_agent_started"
-        expected = executor._run_token
-        try:
-            marker = await asyncio.wait_for(executor.sandbox.read_text(path), timeout=30)
-        except FileNotFoundError:
-            return False
-    else:
-        work_dir = Path(executor.work_dir)
-        try:
-            marker = (work_dir / "_agent_started").read_text(encoding="utf-8")
-        except FileNotFoundError:
-            return False
-        expected = json.loads((work_dir / "_spec.json").read_text())["run_token"]
-    if not expected or marker != expected:
-        raise RuntimeError("invalid agent launch marker")
-    return True
-
-
 def _extract_score(eval_output: Any) -> float | None:
     """Return a numeric score while preserving valid falsy values like 0.0."""
     if eval_output is None:
@@ -784,21 +647,6 @@ def _extract_score(eval_output: Any) -> float | None:
     if isinstance(eval_output, (int, float)):
         return float(eval_output)
     return None
-
-
-def _trajectory_status(agent_status: str, eval_status: str) -> str:
-    """Return the whole-episode status recorded in trajectory final metrics."""
-    # Match the lifecycle promotion order below exactly so trajectory.json and
-    # run.json cannot disagree when both phases fail differently.
-    if eval_status == "failed":
-        return "failed"
-    if agent_status == "timeout":
-        return "timeout"
-    if agent_status == "failed":
-        return "failed"
-    if eval_status == "timeout":
-        return "timeout"
-    return "completed"
 
 
 def _build_env_spec(task_meta: dict[str, Any], *, unit: RunUnit | None = None) -> SandboxSpec:
@@ -836,7 +684,6 @@ def _build_executor(
     agent_name: str,
     run_id: str,
     host_artifacts_dir: Path,
-    sandbox_task_name: str | None = None,
 ) -> BaseExecutor:
     """Dispatch yaml ``executor: <type>`` to the concrete substrate adapter.
 
@@ -848,15 +695,12 @@ def _build_executor(
     env_passthrough = _collect_env_passthrough()
     if executor_type == "sandbox":
         sb = env.sandbox
-        if sandbox_task_name is not None:
-            run_id = uuid.uuid4().hex
-            sb = replace(sb, id=run_id, metadata={})
         sep = "/" if sb.is_linux else "\\"
         remote_work_dir = f"{sb.work_dir_base.rstrip(sep)}{sep}{agent_name}{sep}{run_id}"
         return SandboxExecutor(
             config=config,
             work_dir=remote_work_dir,
-            sandbox=sb,
+            sandbox=env.sandbox,
             env=env_passthrough,
         )
     if executor_type == "local":
@@ -899,26 +743,19 @@ def _collect_env_passthrough() -> dict[str, str]:
         "ANTHROPIC_API_KEY",
         "ANTHROPIC_AUTH_TOKEN",
         "ANTHROPIC_BASE_URL",
-        "AZURE_CODE_API_KEY",
         "OPENAI_API_KEY",
         "OPENROUTER_API_KEY",
         "BRAVE_API_KEY",
         "CURSOR_API_KEY",
         "GEMINI_API_KEY",
-        "GLM_API_KEY",
         "GOOGLE_API_KEY",
         "XAI_API_KEY",
         "GROK_API_KEY",
         "MOONSHOT_API_KEY",
-        "META_API_KEY",
-        "ZAI_API_KEY",
-        "Z_AI_API_KEY",
         "FACTORY_API_KEY",
         "CURSOR_AUTH_JSON_PATH",
         "CURSOR_AUTH_JSON",
-        "ANTIGRAVITY_OAUTH_TOKEN_PATH",
-        "ANTIGRAVITY_OAUTH_TOKEN",
-        "ANTIGRAVITY_GOOGLE_ACCOUNTS",
+        "CODEX_AUTH_JSON",
     )
     result = {k: os.environ[k] for k in keys if k in os.environ}
 
@@ -943,42 +780,6 @@ def _collect_env_passthrough() -> dict[str, str]:
                         "env_passthrough: failed to read CURSOR_AUTH_JSON_PATH=%s: %s",
                         auth_path_str, e,
                     )
-
-    # Antigravity CLI's ALE preset uses OAuth: forward its host credential
-    # file content (a refresh-token JSON) and the active-account marker so the
-    # in-sandbox deployer can write them back and silent-auth headlessly.
-    if "ANTIGRAVITY_OAUTH_TOKEN" not in result:
-        tok_path_str = os.environ.get("ANTIGRAVITY_OAUTH_TOKEN_PATH", "").strip()
-        if tok_path_str:
-            tok_path = _Path(tok_path_str).expanduser()
-            if tok_path.is_file():
-                try:
-                    content = tok_path.read_text(encoding="utf-8")
-                    if content.strip():
-                        result["ANTIGRAVITY_OAUTH_TOKEN"] = content
-                        logger.info(
-                            "env_passthrough: materialised ANTIGRAVITY_OAUTH_TOKEN "
-                            "from ANTIGRAVITY_OAUTH_TOKEN_PATH (%d B)", len(content),
-                        )
-                except OSError as e:
-                    logger.warning(
-                        "env_passthrough: failed to read ANTIGRAVITY_OAUTH_TOKEN_PATH=%s: %s",
-                        tok_path_str, e,
-                    )
-            # The active-account marker sits next to the token file (own
-            # try/except so its failure isn't mis-attributed to the token read).
-            if "ANTIGRAVITY_GOOGLE_ACCOUNTS" not in result and tok_path.is_file():
-                acc = tok_path.parent.parent / "google_accounts.json"
-                if acc.is_file():
-                    try:
-                        ac = acc.read_text(encoding="utf-8")
-                        if ac.strip():
-                            result["ANTIGRAVITY_GOOGLE_ACCOUNTS"] = ac
-                    except OSError as e:
-                        logger.warning(
-                            "env_passthrough: failed to read google_accounts.json "
-                            "next to %s: %s", tok_path_str, e,
-                        )
 
     return result
 
@@ -1045,7 +846,7 @@ async def pull_agent_output(
                     bytes=report.get("bytes"),
                     errors=len(report.get("errors") or []),
                 )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.warning("pull_to_host failed (best-effort): %s", e)
             writer.emit_event("output_gather_failed", transport="local", error=str(e))
         return
@@ -1061,7 +862,7 @@ async def pull_agent_output(
                 transport="s3",
                 s3_path=report.get("s3_path"),
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.warning("push_to_s3 failed (best-effort): %s", e)
             writer.emit_event("output_gather_failed", transport="s3", error=str(e))
         return
@@ -1077,7 +878,7 @@ async def pull_agent_output(
                 transport="oss",
                 oss_path=report.get("oss_path"),
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.warning("push_to_oss failed (best-effort): %s", e)
             writer.emit_event("output_gather_failed", transport="oss", error=str(e))
         return
@@ -1099,7 +900,7 @@ async def pull_agent_output(
             transport="gcs",
             gcs_path=report.get("gcs_path"),
         )
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         logger.warning("push_to_gcs failed (best-effort): %s", e)
         writer.emit_event("output_gather_failed", transport="gcs", error=str(e))
 
@@ -1117,9 +918,7 @@ async def stage_reference(
     """Pull reference data from GCS onto the env for eval (simprun parity).
 
     Mirrors simprun runner.py:_phase3_evaluate phase ``eval_stage``.
-    Backends report an absent reference explicitly. Any staging error is
-    propagated so a corrupt or inaccessible reference cannot be mistaken for
-    a task with no reference data.
+    Best-effort: many tasks don't ship a reference/ prefix.
     """
     task_data = task_meta.get("task_data")
     if task_data is None or not task_data.requires_task_data:
@@ -1127,19 +926,24 @@ async def stage_reference(
     from ..environments import task_data as task_data_pkg
 
     source = _task_data_source(artifacts)
-    backend = task_data_pkg.select(source)
-    report = await backend.stage_reference(env.sandbox, task_data, source=source)
-    if report.get("skipped"):
-        writer.emit_event(
-            "reference_stage_skipped",
-            reason=report.get("reason", "unknown"),
-        )
-    else:
-        writer.emit_event(
-            "reference_stage_completed",
-            staged=report.get("staged"),
-            source=report.get("source"),
-        )
+    try:
+        backend = task_data_pkg.select(source)
+        report = await backend.stage_reference(env.sandbox, task_data, source=source)
+        if report.get("skipped"):
+            writer.emit_event(
+                "reference_stage_skipped",
+                reason=report.get("reason", "unknown"),
+            )
+        else:
+            writer.emit_event(
+                "reference_stage_completed",
+                staged=report.get("staged"),
+                source=report.get("source"),
+            )
+    except RuntimeError as e:
+        # Reference data is optional — many tasks don't have it.
+        logger.info("Reference staging skipped (may not exist): %s", e)
+        writer.emit_event("reference_stage_skipped", reason=str(e)[:200])
 
 
 async def _stage_task_data(
@@ -1198,9 +1002,6 @@ def _build_run_meta(
     total_s: float,
     trajectory: Trajectory | None,
     category: str | None,
-    task_revision_value: str | None = None,
-    environment: dict[str, Any] | None = None,
-    cli_identity: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Construct the LOG_SPEC §4 run.json payload."""
     usage = (
@@ -1208,7 +1009,7 @@ def _build_run_meta(
         if trajectory is not None and trajectory.final_metrics is not None
         else None
     )
-    cfg_repr = redact_config(asdict(config) if is_dataclass(config) else dict(unit.agent_spec.config))
+    cfg_repr = redact_config(dict(unit.agent_spec.config))
     return {
         "schema_version": 2,
         "run_id": run_id,
@@ -1217,8 +1018,7 @@ def _build_run_meta(
             "id": unit.agent_id,
             "class": unit.agent_spec.class_,
             "name": getattr(config, "name", unit.agent_spec.class_),
-            "version": getattr(config, "cli_version", None),
-            "cli_identity": cli_identity or {"cli_version": None, "source": None},
+            "version": None,
             "model": config.model,
             "executor": executor_type,
             "config_repr": cfg_repr,
@@ -1227,9 +1027,7 @@ def _build_run_meta(
             "slug": slug_task(unit.task_path),
             "path": f"tasks/{unit.task_path}",
             "variant_index": unit.variant_index,
-            "revision": task_revision_value,
         },
-        "environment": environment or {},
         "status": status,
         "score": score,
         "termination": {

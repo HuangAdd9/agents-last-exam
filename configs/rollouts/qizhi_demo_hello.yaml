@@ -1,0 +1,27 @@
+schema_version: 1
+name: qizhi-docker-demo-hello
+repo_root: ${env:ALE_REPO_ROOT}
+
+task:
+  id: demo/hello
+  variant: 0
+
+environment:
+  profile: ${env:ALE_REPO_ROOT}/configs/environments/docker_qizhi.yaml
+  task_data_source: local:/inspire/hdd/project/long-working-agent/ky26299/task-data
+  output_path: local
+
+agent:
+  harness: scripted_demo
+  id: scripted-demo-qizhi
+  executor: local
+  model: none
+  config:
+    connect_timeout_s: 180
+
+run:
+  output_root: ${env:ALE_ROLLOUT_ROOT}
+  wall_time_s: 900
+  cleanup_mode: delete
+  max_attempts: 1
+  prompt_suffix: ""

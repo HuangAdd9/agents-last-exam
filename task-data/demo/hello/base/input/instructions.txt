@@ -1,0 +1,1 @@
+Enter the Order ID in the Acme Code Generator, click Generate Code, and save the displayed confirmation code.

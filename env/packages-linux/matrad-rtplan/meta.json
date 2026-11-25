@@ -1,1 +1,1 @@
-{"description": "rtplan-matrad micromamba env (Octave 6.4) + matRad at /opt/matrad-c014dc82", "os": "linux", "verify": "/home/kasm-user/.local/share/micromamba/envs/rtplan-matrad/bin/octave --version"}
+{"description": "rtplan-matrad micromamba env (Octave 6.4) + matRad at /opt/matrad-c014dc82", "os": "linux", "verify": "TARGET_HOME=\"$(getent passwd 1000 | cut -d: -f6)\"; test -n \"$TARGET_HOME\" && \"$TARGET_HOME/.local/share/micromamba/envs/rtplan-matrad/bin/octave\" --version"}

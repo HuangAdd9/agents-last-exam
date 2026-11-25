@@ -1,10 +1,17 @@
 """CodexConfig: per-episode knobs for the OpenAI Codex CLI deployer.
 
-The default is the official npm release pinned by ``cli_version``. Existing
-experiments can still specify ``fork_version`` and their fork binary URLs.
+The deployer ensures the running codex is exactly the pinned **fork** build
+(``fork_version``, e.g. ``codex-cli 0.0.0-agenthle-20260614``): it compares
+``codex --version`` and, when the binary is missing/stale/stock, installs stock
+``@openai/codex`` from NPM (if needed) and overlays the fork native binary from
+the GitHub Release; a matching version skips the download. The fork = openai/codex
+``main`` merged in, plus two carries: the Windows ``apply_patch.exe`` hardlink
+fix and the OpenRouter MCP adaptation (namespaced-tool flatten + dispatch
+remap). Built from cua-verse/codex ``agenthle``; published as the release below.
 
 Auth: OpenRouter routing uses ``OPENROUTER_API_KEY`` injected via env.
-Direct OpenAI routing uses ``OPENAI_API_KEY``.
+Direct OpenAI routing uses ``OPENAI_API_KEY``. ChatGPT subscription routing
+uses a transient ``CODEX_AUTH_JSON`` payload written to an isolated Codex home.
 """
 from __future__ import annotations
 
@@ -25,7 +32,11 @@ _FORK_KNOWN_REASONING_EFFORTS = frozenset(
     {"none", "minimal", "low", "medium", "high", "xhigh", "max"}
 )
 
-_DEFAULT_CODEX_VERSION = "0.163.0"
+# NPM fallback version: only used when NO codex is on PATH (rare — images bake
+# the fork). The stock package is installed then the fork binary is overlaid, so
+# this is just the stock base the overlay replaces. Pin a real published stock
+# version so the fallback install succeeds.
+_DEFAULT_CODEX_VERSION = "0.114.0"
 
 # GitHub Release of the fork native binary, per OS. Downloaded and overlaid over
 # the vendor binary whenever the running version != ``fork_version``.
@@ -64,6 +75,8 @@ class CodexConfig:
         Requires OPENROUTER_API_KEY.
       - ``"direct"`` → direct OpenAI routing via OPENAI_API_KEY.
         Requires OPENAI_API_KEY.
+      - ``"chatgpt"`` → OpenAI routing with a ChatGPT subscription login.
+        Requires CODEX_AUTH_JSON, supplied by the rollout account selector.
     Missing the required key for the chosen provider is a hard error."""
 
     base_url: str | None = None
@@ -74,6 +87,11 @@ class CodexConfig:
     ``<base_url>/responses``. For Volcengine Ark use
     ``https://ark.cn-beijing.volces.com/api/v3`` and an Ark ``ep-...`` endpoint
     id as ``model``."""
+
+    proxy_url: str | None = None
+    """Optional HTTP proxy used only by the Codex child process. The deployer
+    exports it through HTTP_PROXY, HTTPS_PROXY, and ALL_PROXY while keeping
+    localhost in NO_PROXY so the CUA MCP bridge remains direct."""
 
     api_key: str | None = None
     """Literal API key for the ``base_url`` gateway. ``None`` ⇒ the key is read
@@ -95,14 +113,8 @@ class CodexConfig:
     # the Responses-API wire as ``reasoning.effort``.
     reasoning_effort: str = "high"
 
-    context_window: int | None = None
-    auto_compact_token_limit: int | None = None
-
-    coordinate_space: str | None = None
-    """CUA pointer space: infer normalized for Gemini, pixels otherwise."""
-
-    cli_version: str = _DEFAULT_CODEX_VERSION
-    codex_version: str | None = None
+    # NPM package version to install.
+    codex_version: str = _DEFAULT_CODEX_VERSION
 
     # GitHub Release URL for the patched native binary (Linux musl x86-64).
     # Empty string = skip binary replacement (use npm's bundled binary).
@@ -122,8 +134,7 @@ class CodexConfig:
     # baked-fork-by-sentinel skip, which couldn't tell an old fork from a new one
     # (both reported plain ``0.0.0``). Must match the version baked into the
     # release at ``patched_binary_url`` (see codex-rs workspace Cargo.toml).
-    fork_version: str = ""
-    """Optional legacy fork version for reproducing existing experiments."""
+    fork_version: str = "0.0.0-agenthle-20260614"
 
     # ---- model catalog (models not in codex's bundled catalog) ----
     # Host path to a Codex model-catalog JSON (an external catalog
@@ -158,15 +169,44 @@ class CodexConfig:
     # events, API-call timings, prompts, and tool arguments/results in work_dir.
     otel_enabled: bool = True
 
+    # Preserve the Codex session JSONL after the child exits.  The session file
+    # contains the opaque reasoning items (including encrypted_content) that
+    # Codex keeps for context continuity; it is deliberately captured as an
+    # opaque artifact rather than parsed into ALE's public trajectory format.
+    # The file is copied into the deployer work_dir and therefore gathered by
+    # ALE under origin_log/codex/.  Disable only when the additional sensitive
+    # conversation artifact must not be retained.
+    capture_session: bool = True
+
+    # Retry a turn that still exits with HTTP 429 after Codex exhausts its own
+    # short transport retries. Each retry resumes the same session in the same
+    # VM, preserving tool state and encrypted reasoning context.
+    rate_limit_resume_retries: int = 4
+    rate_limit_backoff_base_s: float = 30.0
+    rate_limit_backoff_max_s: float = 240.0
+
     def __post_init__(self) -> None:
-        if self.context_window is not None and self.context_window <= 0:
-            raise ValueError("context_window must be positive")
-        if self.auto_compact_token_limit is not None and self.auto_compact_token_limit <= 0:
-            raise ValueError("auto_compact_token_limit must be positive")
-        if self.codex_version is not None:
-            self.cli_version = self.codex_version
-        if self.coordinate_space not in {None, "pixel", "normalized"}:
-            raise ValueError(f"Invalid CodexConfig.coordinate_space: {self.coordinate_space!r}")
+        if (
+            isinstance(self.rate_limit_resume_retries, bool)
+            or not isinstance(self.rate_limit_resume_retries, int)
+            or self.rate_limit_resume_retries < 0
+        ):
+            raise ValueError("rate_limit_resume_retries must be a non-negative integer")
+        for field_name, value in (
+            ("rate_limit_backoff_base_s", self.rate_limit_backoff_base_s),
+            ("rate_limit_backoff_max_s", self.rate_limit_backoff_max_s),
+        ):
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or value <= 0
+            ):
+                raise ValueError(f"{field_name} must be a positive number")
+        if self.rate_limit_backoff_max_s < self.rate_limit_backoff_base_s:
+            raise ValueError(
+                "rate_limit_backoff_max_s must be greater than or equal to "
+                "rate_limit_backoff_base_s"
+            )
 
         # Load the catalog host-side (build_config) and embed its content so it
         # reaches the in-sandbox deployer. On the in-sandbox reconstruction the
@@ -179,7 +219,7 @@ class CodexConfig:
                     f"codex: model_catalog_path {self.model_catalog_path!r} "
                     f"could not be read: {exc}"
                 ) from exc
-            self.model_catalog_content = _sanitise_catalog_for_fork(raw) if self.fork_version else raw
+            self.model_catalog_content = _sanitise_catalog_for_fork(raw)
 
 
 def _sanitise_catalog_for_fork(raw: str) -> str:

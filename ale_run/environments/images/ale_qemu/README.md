@@ -25,7 +25,7 @@ Check Docker's data root with `docker info --format '{{.DockerRootDir}}'`,
 ```bash
 docker build \
   -f ale_run/environments/images/ale_qemu/Dockerfile \
-  -t agentslastexam/ale-qemu:0.2.0 \
+  -t agentslastexam/ale-qemu:0.3.0 \
   -t agentslastexam/ale-qemu:latest \
   .
 ```
@@ -34,7 +34,7 @@ docker build \
 
 ```bash
 docker login
-docker push agentslastexam/ale-qemu:0.2.0
+docker push agentslastexam/ale-qemu:0.3.0
 docker push agentslastexam/ale-qemu:latest
 ```
 
@@ -44,10 +44,17 @@ docker push agentslastexam/ale-qemu:latest
 - The disk and every backing file must be readable when the container starts.
 - `/dev/kvm` must be passed through.
 - `NET_ADMIN` is required for the guest bridge and NAT rules.
-- `/shared` may be bind-mounted to expose a per-run host exchange directory
-  through Dockur's guest-only Samba share.
+- `/shared` may be bind-mounted to expose a per-run host exchange directory.
+  Linux guests use the runner's virtio-9p mount tag `shared`; Windows guests
+  use Dockur's guest-only Samba share.
 - Container ports `5000` and `8006` expose CUA and noVNC.
 - `VM_NET_IP` defaults to `172.30.0.2`.
+- `ALE_VNC_TARGET=host:port` selects the VNC server behind port 8006. ALE sets
+  it to the guest's `172.30.0.2:5900` x11vnc server for Ubuntu because the
+  desktop uses Xorg's dummy framebuffer rather than QEMU VGA.
+- websocketd serves noVNC and bridges its binary WebSocket directly to VNC.
+  nginx is not started, avoiding its Docker AppArmor socketpair failure
+  without adding privileges or changing the host profile.
 - Docker health becomes healthy when the guest CUA `/status` endpoint responds.
 - For Linux guests, the provider aligns the guest NIC MTU with the host's
   default IPv4 route before returning the sandbox.

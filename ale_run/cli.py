@@ -1,20 +1,20 @@
 """CLI entry: ``python -m ale run experiments/foo.yaml``."""
+
 from __future__ import annotations
 
 import argparse
 import asyncio
 import json
 import logging
-import math
 import sys
 from pathlib import Path
+
+import ale_run as ale
 
 from .orchestration import Runner
 from .orchestration.config_loader import load_experiment
 from .orchestration.experiment_spec import RunUnit
 from .orchestration.run_writer import slug_agent, slug_model, slug_task
-from .tasks import list_tasks
-from .tasks.revision import task_revision
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +50,28 @@ def main(argv: list[str] | None = None) -> int:
     p_list = subparsers.add_parser("list", help="List discoverable tasks.")
     p_list.add_argument("--verbose", "-v", action="store_true")
 
+    p_rollout = subparsers.add_parser(
+        "rollout", help="Validate or run one task from a self-contained rollout yaml."
+    )
+    rollout_subparsers = p_rollout.add_subparsers(dest="rollout_cmd", required=True)
+
+    p_rollout_validate = rollout_subparsers.add_parser(
+        "validate", help="Resolve and validate a rollout without touching a VM."
+    )
+    p_rollout_validate.add_argument("spec_path", type=Path)
+    p_rollout_validate.add_argument("--json", action="store_true", dest="json_output")
+    p_rollout_validate.add_argument("--verbose", "-v", action="store_true")
+
+    p_rollout_run = rollout_subparsers.add_parser(
+        "run", help="Run one validated rollout through the native ALE lifecycle."
+    )
+    p_rollout_run.add_argument("spec_path", type=Path)
+    p_rollout_run.add_argument(
+        "--dry-run", action="store_true", help="Validate and print the plan without touching a VM."
+    )
+    p_rollout_run.add_argument("--json", action="store_true", dest="json_output")
+    p_rollout_run.add_argument("--verbose", "-v", action="store_true")
+
     args = parser.parse_args(argv)
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
@@ -60,6 +82,8 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(_cmd_run(args))
     if args.cmd == "list":
         return _cmd_list(args)
+    if args.cmd == "rollout":
+        return asyncio.run(_cmd_rollout(args))
     return 1
 
 
@@ -103,29 +127,32 @@ async def _cmd_run(args: argparse.Namespace) -> int:
 
 
 def _cmd_list(args: argparse.Namespace) -> int:
-    root = Path("tasks")
-    tasks = list_tasks(root)
-    print(f"discoverable tasks ({len(tasks)}):")
-    for task in tasks:
-        line = f"  {task}"
-        if args.verbose:
-            card = _read_task_card(root / task)
-            vm = card.get("vm")
-            snapshot = vm.get("snapshot") if isinstance(vm, dict) else None
-            snapshot = snapshot or card.get("snapshot") or card.get("vm_category") or ""
-            title = card.get("title") or ""
-            line = f"  {task:<50} {str(snapshot):<18} {title}"
-        print(line)
+    envs = ale.list_envs()
+    print(f"discoverable tasks ({len(envs)}):")
+    for e in envs:
+        print(f"  {e}")
     return 0
 
 
-def _read_task_card(task_dir: Path) -> dict:
-    """Best-effort read of task_card.json; return {} if missing or malformed."""
-    try:
-        data = json.loads((task_dir / "task_card.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
+async def _cmd_rollout(args: argparse.Namespace) -> int:
+    from .rollout import format_plan, load_rollout, run_rollout
+
+    plan = load_rollout(args.spec_path)
+    if args.rollout_cmd == "validate" or args.dry_run:
+        if args.json_output:
+            print(json.dumps(plan.manifest, indent=2, ensure_ascii=False))
+        else:
+            print(format_plan(plan))
+        return 0
+
+    result, summary = await run_rollout(plan)
+    if args.json_output:
+        print(json.dumps(summary, indent=2, ensure_ascii=False))
+    else:
+        _print_results_table([result])
+        if result.run_dir is not None:
+            print(f"\nrun directory: {result.run_dir.resolve()}")
+    return 0 if result.status == "completed" else 1
 
 
 # =============================================================================
@@ -140,13 +167,15 @@ def _filter_units(units: list[RunUnit], args: argparse.Namespace) -> list[RunUni
     return units
 
 
-def _unit_already_done(
-    unit: RunUnit,
-    output_root: Path,
-    *,
-    revisions: dict[str, str] | None = None,
-) -> bool:
-    """Skip scored completed/timeout runs whose task-folder revision still matches."""
+def _unit_already_done(unit: RunUnit, output_root: Path) -> bool:
+    """True if a prior run of this unit reached a resume-skippable status.
+
+    Mirrors :class:`RunWriter`'s on-disk layout
+    ``<output_root>/<agent>/<model>/<task>/v<i>/<ts>/run.json`` and scans every
+    timestamped run dir; the unit is "done" if ANY of them has a ``status`` in
+    :data:`_RESUME_DONE_STATUSES`. Unreadable / malformed run.json files are
+    ignored (treated as not-done, so the unit re-runs).
+    """
     model = (unit.agent_spec.config or {}).get("model", "")
     v_dir = (
         output_root
@@ -157,48 +186,26 @@ def _unit_already_done(
     )
     if not v_dir.is_dir():
         return False
-    revisions = revisions if revisions is not None else {}
-    if unit.task_path not in revisions:
-        try:
-            revisions[unit.task_path] = task_revision(Path("tasks") / unit.task_path)
-        except (OSError, ValueError, RuntimeError) as exc:
-            logger.warning("Cannot verify task revision for %s: %s", unit.task_path, exc)
-            return False
     for ts_dir in v_dir.iterdir():
         run_json = ts_dir / "run.json"
         if not run_json.is_file():
             continue
         try:
-            record = json.loads(run_json.read_text(encoding="utf-8"))
-            evaluation = json.loads((ts_dir / "eval_result.json").read_text(encoding="utf-8"))
+            status = json.loads(run_json.read_text(encoding="utf-8")).get("status")
         except (OSError, ValueError):
             continue
-        if not isinstance(record, dict) or not isinstance(record.get("task"), dict):
-            continue
-        score = record.get("score")
-        if (
-            record.get("status") in _RESUME_DONE_STATUSES
-            and record["task"].get("revision") == revisions[unit.task_path]
-            and isinstance(score, (int, float)) and not isinstance(score, bool)
-            and math.isfinite(score) and 0 <= score <= 1
-            and isinstance(evaluation, dict)
-            and evaluation.get("eval_status") == "success"
-            and not evaluation.get("error")
-            and not isinstance(evaluation.get("score"), bool)
-            and evaluation.get("score") == score
-        ):
+        if status in _RESUME_DONE_STATUSES:
             return True
     return False
 
 
 def _filter_resume(units: list[RunUnit], output_root: Path) -> list[RunUnit]:
-    """Drop completed/timeout units only when their task-folder revision matches."""
-    revisions: dict[str, str] = {}
-    keep = [u for u in units if not _unit_already_done(u, output_root, revisions=revisions)]
+    """Drop units that already have a completed/timeout run on disk."""
+    keep = [u for u in units if not _unit_already_done(u, output_root)]
     skipped = len(units) - len(keep)
     if skipped:
         logger.info(
-            "resume: %d unit(s) completed/timeout at the current task revision; running %d",
+            "resume: %d unit(s) already completed/timeout — skipping; running %d",
             skipped, len(keep),
         )
     else:

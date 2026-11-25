@@ -1,10 +1,10 @@
 {
-  "description": "Ruffle 0.2.0 (Flash/SWF emulator) at C:\\Program Files\\ruffle\\bin \u2014 matches dev-win10",
+  "description": "Ruffle 0.2.0 (Flash/SWF emulator) at C:\\Program Files\\ruffle\\bin, exposed on the machine PATH",
   "os": "windows",
   "provides": [
     "ruffle"
   ],
   "version": "0.2.0",
   "install_location": "C:\\Program Files\\ruffle",
-  "verify": "powershell -NoProfile -Command \"(Get-Item 'C:\\Program Files\\ruffle\\bin\\ruffle.exe').VersionInfo.ProductVersion -like '0.2.0*'\""
+  "verify": "powershell -NoProfile -Command \"$p='C:\\\\Program Files\\\\ruffle\\\\bin'; if(((Get-Item (Join-Path $p 'ruffle.exe')).VersionInfo.ProductVersion -like '0.2.0*') -and (([Environment]::GetEnvironmentVariable('Path','Machine') -split ';') -contains $p)){$true}else{throw 'missing executable or PATH entry'}\""
 }

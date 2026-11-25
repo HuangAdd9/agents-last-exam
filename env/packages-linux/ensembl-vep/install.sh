@@ -2,10 +2,12 @@
 # Ensembl VEP via conda-forge/bioconda at /opt/ensembl-vep (vep on PATH). The
 # species cache is large task DATA, not installed here.
 set -euo pipefail
-MM=/home/kasm-user/.local/bin/micromamba
+TARGET_HOME="$(getent passwd 1000 | cut -d: -f6)"
+[ -n "$TARGET_HOME" ] || { echo "[pkg ensembl-vep] FATAL: uid 1000 has no passwd entry" >&2; exit 1; }
+MM="$TARGET_HOME/.local/bin/micromamba"
 [ -x "$MM" ] || { echo "[pkg ensembl-vep] FATAL: micromamba required first" >&2; exit 1; }
 P=/opt/ensembl-vep
-export MAMBA_ROOT_PREFIX=/home/kasm-user/.local/share/micromamba
+export MAMBA_ROOT_PREFIX="$TARGET_HOME/.local/share/micromamba"
 if [ ! -x "$P/bin/vep" ]; then
   "$MM" create -y -p "$P" -c bioconda -c conda-forge ensembl-vep
   chown -R 1000:0 "$P" 2>/dev/null || true

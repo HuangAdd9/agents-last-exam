@@ -1,0 +1,21 @@
+# Qizhi CPU/GPU job Docker adapter.
+#
+# Qizhi guarantees host networking but not Docker bridge networking or -p.
+# ALE's published Ubuntu image binds CUA on :5000 and noVNC on :6901, so only
+# one sandbox may run in a job at a time. Single-task rollout specs already use
+# concurrency=1; multi-task ExperimentSpec users must set it explicitly.
+snapshots:
+  cpu-free-ubuntu:
+    provider: docker
+    image: ale-ubuntu22-docker
+    docker:
+      network_mode: host
+      shm_size: 2g
+      resolution: [1920, 1080]
+
+# Keep task data on the persistent project HDD and inject the selected task at
+# run time. The published image does not contain every task (including the
+# demo/hello smoke fixture), while Docker's ephemeral VFS is discarded when
+# qz-docker-shell exits.
+task_data_source: local:/inspire/hdd/project/long-working-agent/ky26299/task-data
+output_path: local

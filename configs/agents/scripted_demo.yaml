@@ -1,0 +1,6 @@
+harness: scripted_demo
+executor: local
+model: none
+
+config:
+  connect_timeout_s: 120

@@ -3,10 +3,12 @@
 # at /opt/r-bioc (avoids the source-compile ABI failure of tradeSeq on rig R).
 # Symlinks /usr/bin/Rscript so the task's direct Rscript resolves it.
 set -euo pipefail
-MM=/home/kasm-user/.local/bin/micromamba
+TARGET_HOME="$(getent passwd 1000 | cut -d: -f6)"
+[ -n "$TARGET_HOME" ] || { echo "[pkg bioc-tradeseq-conda] FATAL: uid 1000 has no passwd entry" >&2; exit 1; }
+MM="$TARGET_HOME/.local/bin/micromamba"
 [ -x "$MM" ] || { echo "[pkg bioc-tradeseq-conda] FATAL: micromamba required first" >&2; exit 1; }
 P=/opt/r-bioc
-export MAMBA_ROOT_PREFIX=/home/kasm-user/.local/share/micromamba
+export MAMBA_ROOT_PREFIX="$TARGET_HOME/.local/share/micromamba"
 if [ ! -x "$P/bin/Rscript" ]; then
   "$MM" create -y -p "$P" -c bioconda -c conda-forge \
     bioconductor-singlecellexperiment bioconductor-tradeseq r-mgcv

@@ -1,12 +1,12 @@
 """DockerProvider — ephemeral Docker containers via ``docker run``.
 
-Each ``acquire`` launches a fresh container from the ale-kasm image,
-maps a random host port to the container's cua-server (port 8000),
-waits for the server to become healthy, and returns a SandboxHandle
-whose ``endpoint`` is ``http://127.0.0.1:<host_port>``.
+Each ``acquire`` launches a fresh container from the configured image. The
+default ``bridge`` network maps random host ports to the container's CUA/VNC
+ports. ``host`` network mode is also supported for runtimes such as the Qizhi
+PRoot Docker adapter, where Docker's bridge network and ``-p`` are unavailable.
 
-Concurrent tasks each get their own container + port — no proxy layer
-required. Docker's native port mapping IS the routing mechanism.
+In bridge mode concurrent tasks each get their own container + port — no proxy
+layer is required. Host mode uses fixed image ports and therefore runs serially.
 
 Container naming follows the same ``<prefix>-<task-slug>-<hash8>``
 scheme as GCE VMs for log greppability.
@@ -16,15 +16,14 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
 import logging
 import random
 import re
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
-from ...base_interface import SandboxSpec, Provider, ReleaseMode, SandboxHandle
+from ...base_interface import Provider, ReleaseMode, SandboxHandle, SandboxSpec
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +31,7 @@ _CUA_INTERNAL_PORT = 8000
 _VNC_INTERNAL_PORT = 6901
 _CUA_READY_TIMEOUT = 120
 _CUA_READY_POLL_INTERVAL = 3
+_CUA_READY_STABLE_SUCCESSES = 2
 
 _DEFAULT_CONTAINER_REF = "agentslastexam/ale-kasm:latest"  # fallback if an Image has no docker_image
 _CONTAINER_PREFIX = "ale"                                  # container name prefix (not configurable)
@@ -75,7 +75,11 @@ class DockerProviderConfig:
     image_ref   Override the container ref to boot (default: the Image entry's
                 ``docker_image``). Lets one env config pin a specific tag, e.g.
                 a DinD-capable build, without editing the Image registry.
-    image_revision  Optional expected SHA-256 image ID or repository digest.
+    network_mode Docker network mode: ``bridge`` (default) publishes the CUA
+                and VNC ports on random host ports; ``host`` passes
+                ``--network host`` and connects directly to the image's fixed
+                CUA port. Host mode requires provider concurrency 1 when every
+                container uses the same fixed ports (as ALE images do).
     """
 
     image: str = "ale-kasm"
@@ -86,21 +90,23 @@ class DockerProviderConfig:
     gcs_sa_key: str = ""
     privileged: bool = False
     image_ref: str = ""
+    network_mode: Literal["bridge", "host"] = "bridge"
     # Start the in-container nested dockerd (DinD) for custom development.
     # The supported rootless-Docker profile excludes nested-runtime tasks and
     # routes them to the QEMU/KVM Ubuntu guest instead. When true the container
     # gets ALE_ENABLE_DIND=1; enabling it broadly can add substantial
     # fuse-overlayfs I/O at high concurrency.
     enable_dind: bool = False
-    image_revision: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.network_mode not in {"bridge", "host"}:
+            raise ValueError(
+                "docker.network_mode must be 'bridge' or 'host', got "
+                f"{self.network_mode!r}"
+            )
 
 
 def _build_provider_config(raw: dict[str, Any]) -> DockerProviderConfig:
-    image_revision = raw.get("image_revision")
-    if image_revision is not None:
-        image_revision = str(image_revision).strip() or None
-    if image_revision is not None and not re.fullmatch(r"sha256:[0-9a-f]{64}", image_revision):
-        raise ValueError("docker image_revision must be a sha256:<64 lowercase hex digits> digest")
     gcs_sa = raw.get("gcs_sa_key") or ""
     if gcs_sa:
         from pathlib import Path as _P
@@ -117,8 +123,8 @@ def _build_provider_config(raw: dict[str, Any]) -> DockerProviderConfig:
         gcs_sa_key=gcs_sa,
         privileged=bool(raw.get("privileged") or False),
         image_ref=str(raw.get("image_ref") or ""),
+        network_mode=str(raw.get("network_mode") or "bridge").strip().lower(),
         enable_dind=bool(raw.get("enable_dind") or False),
-        image_revision=image_revision,
     )
 
 
@@ -169,59 +175,6 @@ async def _get_host_port(container_name: str, internal_port: int) -> int:
     return int(stdout.strip())
 
 
-async def _get_resource_limits(container_name: str) -> dict[str, int | float]:
-    rc, stdout, stderr = await _run_docker(
-        "inspect", "--format", "{{json .HostConfig}}", container_name,
-    )
-    if rc != 0:
-        raise RuntimeError(
-            f"Failed to inspect container {container_name} limits: {stderr}"
-        )
-    host_config = json.loads(stdout)
-    return {
-        "cpu_quota": host_config["NanoCpus"] / 1_000_000_000,
-        "memory_limit_bytes": host_config["Memory"],
-    }
-
-
-async def _get_image_provenance(
-    container_name: str, config: DockerProviderConfig, container_ref: str,
-) -> dict[str, Any]:
-    rc, image_id, stderr = await _run_docker("inspect", "--format", "{{.Image}}", container_name)
-    if rc != 0:
-        raise RuntimeError(f"Failed to inspect container {container_name} image: {stderr}")
-    image_id = image_id.strip()
-    if not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id):
-        raise RuntimeError(f"Container {container_name} has invalid image ID {image_id!r}")
-    rc, stdout, stderr = await _run_docker(
-        "image", "inspect", "--format", "{{json .RepoDigests}}", image_id,
-    )
-    if rc != 0:
-        raise RuntimeError(f"Failed to inspect Docker image {image_id} digests: {stderr}")
-    repo_digests = json.loads(stdout) or []
-    if not isinstance(repo_digests, list) or not all(isinstance(ref, str) for ref in repo_digests):
-        raise RuntimeError(f"Docker image {image_id} has invalid RepoDigests")
-    digests = {ref.rsplit("@", 1)[-1] for ref in repo_digests}
-    selected_digest = container_ref.rsplit("@", 1)[-1] if "@" in container_ref else None
-    if selected_digest is not None and selected_digest not in digests:
-        raise RuntimeError(
-            f"Docker selected image digest mismatch: expected {selected_digest}, "
-            f"acquired {image_id} with RepoDigests {repo_digests}"
-        )
-    if config.image_revision is not None and config.image_revision not in {image_id, *digests}:
-        raise RuntimeError(
-            f"Docker image_revision mismatch: expected {config.image_revision}, "
-            f"acquired {image_id} with RepoDigests {repo_digests}"
-        )
-    return {
-        "provider": "docker",
-        "image": config.image,
-        "image_revision": selected_digest or config.image_revision or image_id,
-        "image_ref": container_ref,
-        "image_id": image_id,
-    }
-
-
 async def _wait_cua_ready(
     cua_url: str,
     timeout: float = _CUA_READY_TIMEOUT,
@@ -247,7 +200,7 @@ def _sa_key_project_id(host_key_path: str) -> str:
     from pathlib import Path as _P
     try:
         return _json.loads(_P(host_key_path).read_text()).get("project_id", "") or ""
-    except Exception:
+    except (OSError, ValueError, AttributeError, TypeError):
         return ""
 
 
@@ -284,20 +237,26 @@ class DockerProvider(Provider):
         run_args = [
             "run", "-d",
             "--name", name,
-            "-p", f"127.0.0.1:0:{cua_internal_port}",
-            "-p", f"127.0.0.1:0:{_VNC_INTERNAL_PORT}",
+        ]
+        if self._cfg.network_mode == "host":
+            run_args.extend(["--network", "host"])
+        else:
+            run_args.extend([
+                "-p", f"0:{cua_internal_port}",
+                "-p", f"0:{_VNC_INTERNAL_PORT}",
+            ])
+        run_args.extend([
             f"--shm-size={self._cfg.shm_size}",
-            "--init",
-            "-e", "LANG=C.UTF-8",
-            "-e", "LC_ALL=C.UTF-8",
             # Virtual display size for the in-container Xvfb (the entrypoint reads
             # this; falls back to its own default if unset).
             "-e", f"ALE_SCREEN_RESOLUTION={res[0]}x{res[1]}",
             # DinD is gated off in the entrypoint unless this is set (default off).
             "-e", f"ALE_ENABLE_DIND={'1' if self._cfg.enable_dind else '0'}",
-            # The image entrypoint starts X and CUA; --init only reaps processes.
+            # A container has no init, so the image's entrypoint starts the X
+            # display + cua-server itself. Invoke it explicitly: some images ship
+            # a no-op CMD ("sleep infinity") that never would.
             "--entrypoint", image.docker_entrypoint,
-        ]
+        ])
         if self._cfg.privileged:
             # Needed for tasks whose eval runs nested Docker; under rootless
             # docker the privileged container's root is still user-ns-bounded.
@@ -307,7 +266,7 @@ class DockerProvider(Provider):
         # so a Docker sandbox gets the same shape gcloud would give the task. A
         # non-zero cpus / non-empty memory in the provider config overrides the
         # derived value (a host-protection cap under single-host concurrency).
-        from .gcloud import _parse_gce_machine_type, _DEFAULT_CPU_MACHINE
+        from .gcloud import _DEFAULT_CPU_MACHINE, _parse_gce_machine_type
         shape = _parse_gce_machine_type(spec.machine_type or _DEFAULT_CPU_MACHINE)
         cpus = (
             self._cfg.cpus
@@ -331,7 +290,10 @@ class DockerProvider(Provider):
         run_args.append(container_ref)
         run_args.append("--wait")
 
-        logger.info("Creating Docker container %s from %s", name, container_ref)
+        logger.info(
+            "Creating Docker container %s from %s (network=%s)",
+            name, container_ref, self._cfg.network_mode,
+        )
         rc, stdout, stderr = await _run_docker(*run_args)
         if rc != 0:
             raise RuntimeError(
@@ -339,55 +301,58 @@ class DockerProvider(Provider):
             )
         logger.info("Container %s started (id=%s)", name, stdout[:12])
 
-        try:
-            image_provenance = await _get_image_provenance(name, self._cfg, container_ref)
+        if self._cfg.network_mode == "host":
+            # Host mode has no NAT mapping to inspect. The container binds in
+            # the launcher's network namespace, which is the supported path on
+            # Qizhi's PRoot Docker adapter.
+            cua_port = cua_internal_port
+            vnc_port = _VNC_INTERNAL_PORT
+            cua_url = f"http://127.0.0.1:{cua_port}"
+        else:
             cua_port = await _get_host_port(name, cua_internal_port)
             vnc_port = await _get_host_port(name, _VNC_INTERNAL_PORT)
-            cua_url = f"http://127.0.0.1:{cua_port}"
+            cua_url = f"http://localhost:{cua_port}"
 
-            logger.info(
-                "Container %s ports: cua=%d vnc=%d",
-                name, cua_port, vnc_port,
+        logger.info(
+            "Container %s ports: cua=%d vnc=%d",
+            name, cua_port, vnc_port,
+        )
+
+        ready = await _wait_cua_ready(cua_url)
+        if not ready:
+            logger.error("CUA server not ready in %s, cleaning up", name)
+            await _run_docker("rm", "-f", name)
+            raise RuntimeError(
+                f"CUA server at {cua_url} (container {name}) did not become ready"
             )
 
-            ready = await _wait_cua_ready(cua_url)
-            if not ready:
-                raise RuntimeError(
-                    f"CUA server at {cua_url} (container {name}) did not become ready"
-                )
+        gcs_user_project = ""
+        if self._cfg.gcs_sa_key:
+            await self._inject_gcs_credentials(name, self._cfg.gcs_sa_key)
+            # gs://ale-data-public is requester-pays: gsutil needs an explicit
+            # -u <billing-project>. Derive it from the SA key's own project_id
+            # — same source as the injected identity, so the project we bill
+            # always matches the SA we authenticate as. Surfaced so data-staging
+            # adds the flag (see gsbucket).
+            gcs_user_project = _sa_key_project_id(self._cfg.gcs_sa_key)
 
-            resource_limits = await _get_resource_limits(name)
-            gcs_user_project = ""
-            if self._cfg.gcs_sa_key:
-                await self._inject_gcs_credentials(name, self._cfg.gcs_sa_key)
-                gcs_user_project = _sa_key_project_id(self._cfg.gcs_sa_key)
-
-            return SandboxHandle(
-                id=name,
-                endpoint=cua_url,
-                os=image.os,
-                **image.sandbox_paths(),
-                metadata={
-                    "provider": "docker",
-                    "container_name": name,
-                    "container_id": stdout[:12],
-                    "cua_port": cua_port,
-                    "vnc_port": vnc_port,
-                    "image": self._cfg.image,
-                    "image_provenance": image_provenance,
-                    "snapshot": spec.snapshot,
-                    "gcs_user_project": gcs_user_project,
-                    "resource_limits": resource_limits,
-                },
-            )
-        except BaseException:
-            try:
-                cleanup_rc, _, cleanup_error = await _run_docker("rm", "-f", name)
-                if cleanup_rc != 0:
-                    logger.error("Failed to remove container %s: %s", name, cleanup_error)
-            except Exception:
-                logger.exception("Failed to remove container %s after acquisition failure", name)
-            raise
+        return SandboxHandle(
+            id=name,
+            endpoint=cua_url,
+            os=image.os,
+            **image.sandbox_paths(),
+            metadata={
+                "provider": "docker",
+                "container_name": name,
+                "container_id": stdout[:12],
+                "cua_port": cua_port,
+                "vnc_port": vnc_port,
+                "image": self._cfg.image,
+                "network_mode": self._cfg.network_mode,
+                "snapshot": spec.snapshot,
+                "gcs_user_project": gcs_user_project,
+            },
+        )
 
     async def release(
         self, sandbox: SandboxHandle, *, mode: ReleaseMode = "delete",
@@ -459,6 +424,7 @@ class DockerProvider(Provider):
 
     def open_session(self, sandbox: SandboxHandle) -> Any:
         from cua_bench.computers.remote import RemoteDesktopSession
+
         from .gcloud import _init_computer_skip_wait
 
         session = RemoteDesktopSession(

@@ -10,10 +10,11 @@ import os
 import threading
 import uuid
 from collections import Counter, deque
-from datetime import datetime, timezone
+from collections.abc import Iterable, Iterator
+from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 _RAW_CHUNK_BYTES = 512 * 1024
 
@@ -85,15 +86,15 @@ class CodexOtelCollector:
         self._write_summary()
 
     def _store_request(self, headers: dict[str, str], body: bytes) -> None:
-        received_at = datetime.now(timezone.utc).isoformat()
+        received_at = datetime.now(UTC).isoformat()
         try:
             payload = json.loads(body)
         except (UnicodeDecodeError, json.JSONDecodeError):
             payload = None
         events = (
-            list(_flatten_otlp_logs(payload, received_at))
+            _flatten_otlp_logs(payload, received_at)
             if isinstance(payload, dict)
-            else []
+            else iter(())
         )
         request_id = uuid.uuid4().hex
         chunks = [
@@ -121,40 +122,59 @@ class CodexOtelCollector:
                     file.write(json.dumps(record, ensure_ascii=False) + "\n")
                 file.flush()
                 os.fsync(file.fileno())
-            if events:
-                with self.events_path.open("a", encoding="utf-8") as file:
-                    for event in events:
-                        file.write(json.dumps(event, ensure_ascii=False) + "\n")
+            with self.events_path.open("a", encoding="utf-8") as file:
+                for event in events:
+                    file.write(json.dumps(event, ensure_ascii=False) + "\n")
 
-    def _write_summary(self, events: list[dict[str, Any]] | None = None) -> None:
-        if events is None:
-            events = _read_jsonl(self.events_path)
-        events.sort(
-            key=lambda event: (
-                event.get("attributes", {}).get("event.timestamp")
-                or event.get("observed_time_unix_nano")
-                or ""
-            )
-        )
+    def _write_summary(self, events: Iterable[dict[str, Any]] | None = None) -> None:
+        """Build the summary without materialising every SSE event in RAM."""
+        source = _iter_jsonl(self.events_path) if events is None else iter(events)
+        names: Counter[str] = Counter()
+        event_count = 0
+        api_events: list[dict[str, Any]] = []
+        transport_connections: list[dict[str, Any]] = []
+        time_to_first_token: list[dict[str, Any]] = []
+        tool_events: list[dict[str, Any]] = []
 
-        names = Counter(
-            event.get("attributes", {}).get("event.name", "unknown") for event in events
-        )
+        for event in source:
+            event_count += 1
+            event_name = event.get("attributes", {}).get("event.name", "unknown")
+            names[event_name] += 1
+            # _summarize_api_calls only consumes response.completed SSE
+            # events, but filtering here keeps ordinary token deltas out of
+            # memory even for very long conversations.
+            if event_name in {
+                "codex.api_request",
+                "codex.websocket_request",
+                "codex.sse_event",
+            } and (
+                event_name != "codex.sse_event"
+                or event.get("attributes", {}).get("event.kind")
+                == "response.completed"
+            ):
+                api_events.append(event)
+            if event_name == "codex.websocket_connect":
+                transport_connections.append(event)
+            elif event_name == "codex.turn_ttft":
+                time_to_first_token.append(event)
+            elif event_name == "codex.tool_result":
+                tool_events.append(event)
+
+        for selected in (
+            api_events,
+            transport_connections,
+            time_to_first_token,
+            tool_events,
+        ):
+            selected.sort(key=_event_sort_key)
+
         summary = {
-            "event_count": len(events),
+            "event_count": event_count,
             "events_by_name": dict(sorted(names.items())),
-            "api_calls": _summarize_api_calls(events),
-            "transport_connections": [
-                event
-                for event in events
-                if event.get("attributes", {}).get("event.name") == "codex.websocket_connect"
-            ],
-            "time_to_first_token": [
-                event
-                for event in events
-                if event.get("attributes", {}).get("event.name") == "codex.turn_ttft"
-            ],
-            "tool_executions": _summarize_tools(events),
+            "api_calls": _summarize_api_calls(api_events),
+            "transport_connections": transport_connections,
+            "time_to_first_token": time_to_first_token,
+            "tool_executions": _summarize_tools(tool_events),
             "artifacts": {
                 "raw_otlp_requests": self.raw_path.name,
                 "events": self.events_path.name,
@@ -172,15 +192,15 @@ def recover_telemetry_artifacts(work_dir: Path) -> int:
     if not raw_path.exists():
         return 0
 
-    events: list[dict[str, Any]] = []
-    for received_at, payload in _read_otlp_payloads(raw_path):
-        events.extend(_flatten_otlp_logs(payload, received_at))
+    def recovered_events() -> Iterator[dict[str, Any]]:
+        for received_at, payload in _read_otlp_payloads(raw_path):
+            yield from _flatten_otlp_logs(payload, received_at)
 
     events_path = work_dir / "telemetry.jsonl"
-    _write_jsonl_atomic(events_path, events)
+    event_count = _write_jsonl_atomic(events_path, recovered_events())
     collector = CodexOtelCollector(work_dir)
-    collector._write_summary(events)
-    return len(events)
+    collector._write_summary()
+    return event_count
 
 
 def _read_otlp_payloads(path: Path) -> Iterator[tuple[str, dict[str, Any]]]:
@@ -261,10 +281,6 @@ def _decode_chunked_payload(
     return state["received_at"], payload
 
 
-def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    return list(_iter_jsonl(path))
-
-
 def _iter_jsonl(path: Path) -> Iterator[dict[str, Any]]:
     if not path.exists():
         return
@@ -278,21 +294,25 @@ def _iter_jsonl(path: Path) -> Iterator[dict[str, Any]]:
                 yield record
 
 
-def _write_jsonl_atomic(path: Path, records: list[dict[str, Any]]) -> None:
+def _write_jsonl_atomic(path: Path, records: Iterable[dict[str, Any]]) -> int:
     tmp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    count = 0
     try:
         with tmp_path.open("w", encoding="utf-8") as file:
             for record in records:
                 file.write(json.dumps(record, ensure_ascii=False) + "\n")
+                count += 1
             file.flush()
             os.fsync(file.fileno())
         os.replace(tmp_path, path)
     finally:
         tmp_path.unlink(missing_ok=True)
+    return count
 
 
-def _flatten_otlp_logs(payload: dict[str, Any], received_at: str) -> list[dict[str, Any]]:
-    events: list[dict[str, Any]] = []
+def _flatten_otlp_logs(
+    payload: dict[str, Any], received_at: str,
+) -> Iterator[dict[str, Any]]:
     for resource_log in payload.get("resourceLogs", []):
         resource = _attributes(resource_log.get("resource", {}).get("attributes", []))
         for scope_log in resource_log.get("scopeLogs", []):
@@ -303,23 +323,20 @@ def _flatten_otlp_logs(payload: dict[str, Any], received_at: str) -> list[dict[s
                 "attributes": _attributes(scope_data.get("attributes", [])),
             }
             for record in scope_log.get("logRecords", []):
-                events.append(
-                    {
-                        "received_at": received_at,
-                        "time_unix_nano": record.get("timeUnixNano"),
-                        "observed_time_unix_nano": record.get("observedTimeUnixNano"),
-                        "severity_number": record.get("severityNumber"),
-                        "severity_text": record.get("severityText"),
-                        "body": _any_value(record.get("body")),
-                        "attributes": _attributes(record.get("attributes", [])),
-                        "resource": resource,
-                        "scope": scope,
-                        "trace_id": record.get("traceId"),
-                        "span_id": record.get("spanId"),
-                        "flags": record.get("flags"),
-                    }
-                )
-    return events
+                yield {
+                    "received_at": received_at,
+                    "time_unix_nano": record.get("timeUnixNano"),
+                    "observed_time_unix_nano": record.get("observedTimeUnixNano"),
+                    "severity_number": record.get("severityNumber"),
+                    "severity_text": record.get("severityText"),
+                    "body": _any_value(record.get("body")),
+                    "attributes": _attributes(record.get("attributes", [])),
+                    "resource": resource,
+                    "scope": scope,
+                    "trace_id": record.get("traceId"),
+                    "span_id": record.get("spanId"),
+                    "flags": record.get("flags"),
+                }
 
 
 def _attributes(items: list[dict[str, Any]]) -> dict[str, Any]:
@@ -347,6 +364,14 @@ def _any_value(value: Any) -> Any:
     if "kvlistValue" in value:
         return _attributes(value["kvlistValue"].get("values", []))
     return value
+
+
+def _event_sort_key(event: dict[str, Any]) -> str:
+    return str(
+        event.get("attributes", {}).get("event.timestamp")
+        or event.get("observed_time_unix_nano")
+        or ""
+    )
 
 
 def _summarize_api_calls(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -431,7 +456,7 @@ def _parse_timestamp(value: Any) -> datetime | None:
     if not isinstance(value, str) or not value:
         return None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return datetime.fromisoformat(value)
     except ValueError:
         return None
 
@@ -440,7 +465,7 @@ def _format_epoch_ms(value: float | None) -> str | None:
     if value is None:
         return None
     return (
-        datetime.fromtimestamp(value / 1000, timezone.utc)
+        datetime.fromtimestamp(value / 1000, UTC)
         .isoformat(timespec="milliseconds")
         .replace("+00:00", "Z")
     )

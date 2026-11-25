@@ -1,0 +1,10 @@
+# Open-source industrial EDA slice.
+#
+# Windows GUI: LTspice and KiCad.
+# Linux CLI: Chisel/firtool/Yosys, NVDLA Verilator, and OpenROAD-flow-scripts.
+engineering/Analog_Active
+engineering/chisel_verilog_alignment_seq_1
+engineering/kicad_navswitch_library_integration_release_002
+engineering/nvdla_bdma_surface_stride_repair
+engineering/openroad_sky130_ibex_pnr_signoff
+engineering/pcb_layout_kicad_1

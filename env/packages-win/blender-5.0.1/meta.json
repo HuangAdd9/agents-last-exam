@@ -1,5 +1,5 @@
 {
-  "description": "Blender 5.0.1 (official MSI). The SOLE baked Blender on both free images: it is the canonical/calibrated version for the blender_character_reconstruction_from_multiview_01 eval (which rejects 4.5.x and prefers 5.0.x), and every other Blender task runs on it. Install removes any other Blender (5.1 / C:\\Tools\\Blender 4.5) so the eval's 'newest-installed-wins' resolution always lands on 5.0.1. Path: C:\\Program Files\\Blender Foundation\\Blender 5.0",
+  "description": "Blender 5.0.1 (official MSI). The canonical registered Blender on both free images and calibrated version for blender_character_reconstruction_from_multiview_01. Install removes other registered/stray Blender versions while preserving the task-pinned portable C:\\Softwares\\Blender-4.5.1 runtime. Path: C:\\Program Files\\Blender Foundation\\Blender 5.0",
   "os": "windows",
   "provides": ["blender"],
   "version": "5.0.1",

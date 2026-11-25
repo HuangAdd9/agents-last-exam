@@ -40,7 +40,8 @@
 #     Required when task data or output uses a gs:// path.
 #   output_path
 #     `local` copies the guest output directory through a per-run shared folder
-#     into the host run directory. A gs:// path uploads directly from the guest.
+#     into the host run directory. Linux uses virtio-9p and Windows uses SMB.
+#     A gs:// path uploads directly from the guest.
 #
 # VM CPU and memory normally come from task-card `machineType`, or explicit
 # `vcpus` / `memory_gb` fields. Per-snapshot qemu.vcpus and qemu.memory_gb can
@@ -54,7 +55,7 @@ snapshots:
       image_revision: 21290f6d47ae765def3c799281e8cf6e4bc22a22
       # GCS alternative: gs://ale-data-public/images/ale-ubuntu22-v1.1.qcow2
       root: ~/.cache/ale/qemu
-      runner_image: agentslastexam/ale-qemu:0.2.0
+      runner_image: agentslastexam/ale-qemu:0.3.0
       runner_pull_policy: missing
       shm_size: 2g
       ready_timeout_s: 900
@@ -67,7 +68,7 @@ snapshots:
       image_revision: 21290f6d47ae765def3c799281e8cf6e4bc22a22
       # GCS alternative: gs://ale-data-public/images/ale-win10-v1.1.qcow2
       root: ~/.cache/ale/qemu
-      runner_image: agentslastexam/ale-qemu:0.2.0
+      runner_image: agentslastexam/ale-qemu:0.3.0
       runner_pull_policy: missing
       shm_size: 2g
       ready_timeout_s: 900

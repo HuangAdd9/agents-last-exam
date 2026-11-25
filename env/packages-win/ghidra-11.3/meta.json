@@ -1,0 +1,8 @@
+{
+  "description": "Ghidra 11.3 with a pinned Eclipse Temurin JDK 21.0.10+7 portable runtime",
+  "os": "windows",
+  "provides": ["ghidra", "jdk-21"],
+  "version": "11.3",
+  "install_location": "C:\\Softwares\\Ghidra-11.3",
+  "verify": "powershell -NoProfile -Command \"$r='C:\\\\Softwares\\\\Ghidra-11.3'; $g=Join-Path $r 'ghidra_11.3_PUBLIC\\\\ghidraRun.bat'; $j=Join-Path $r 'jdk-21.0.10+7\\\\bin\\\\java.exe'; $p=Join-Path $r 'ghidra_11.3_PUBLIC\\\\Ghidra\\\\application.properties'; $v=Join-Path $r 'jdk-21.0.10+7\\\\release'; if((Test-Path $g) -and (Test-Path $j) -and (Test-Path $p) -and (Test-Path $v) -and (Select-String -LiteralPath $p -Pattern '^application.version=11\\.3$' -Quiet) -and (Select-String -LiteralPath $v -Pattern '^JAVA_VERSION=.*21\\.0\\.10.*$' -Quiet)){$true}else{throw 'missing or wrong version'}\""
+}

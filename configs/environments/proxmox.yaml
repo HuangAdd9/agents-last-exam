@@ -1,0 +1,75 @@
+# Proxmox VE provider. Each run clones a prepared PVE template and gives the
+# clone its own VMID. The existing qemu provider remains available for hosts
+# that have Docker and /dev/kvm but no Proxmox VE.
+#
+# Before using this file:
+#   1. Import each ALE qcow2 into a PVE VM and convert that VM to a template.
+#   2. Enable QEMU Guest Agent in the template and configure its NIC for DHCP.
+#   3. Put PROXMOX_API_TOKEN_ID and PROXMOX_API_TOKEN_SECRET in secret/.env.
+#   4. Replace template_vmid, node, and guest_cidr with local values.
+#
+# Linked clones are the default. They are quick and space efficient, but the
+# template disks must live on storage that supports linked clones.
+snapshots:
+  cpu-free-ubuntu:
+    provider: proxmox
+    image: ale-ubuntu22
+    proxmox:
+      api_url: https://127.0.0.1:8006
+      token_id: "${env:PROXMOX_API_TOKEN_ID}"
+      token_secret: "${env:PROXMOX_API_TOKEN_SECRET}"
+      verify_ssl: false
+      node: seed3
+      template_vmid: 9002
+      full_clone: false
+      guest_cidr: 192.168.0.0/24
+      ready_timeout_s: 900
+      # Optional live view of the guest's x11vnc desktop. Install the standard
+      # `novnc` and `websockify` packages on the machine running ALE first.
+      novnc_enabled: false
+      novnc_bind_address: 127.0.0.1
+      novnc_public_host: ""
+      novnc_port_min: 6080
+      novnc_port_max: 6180
+      novnc_guest_port: 5900
+      novnc_ready_timeout_s: 60
+      novnc_websockify: /usr/bin/websockify
+      novnc_web_root: /usr/share/novnc
+      novnc_runtime_root: /tmp/ale-proxmox-novnc
+      # Modern noVNC needs HTTPS/WSS when accessed through a non-loopback host.
+      novnc_tls_cert: ""
+      novnc_tls_key: ""
+      # ALE Ubuntu only: rotate x11vnc auth per clone and authenticate the page automatically.
+      novnc_manage_guest_password: false
+
+  nvdla-ubuntu:
+    provider: proxmox
+    image: ale-ubuntu22
+    proxmox:
+      api_url: https://127.0.0.1:8006
+      token_id: "${env:PROXMOX_API_TOKEN_ID}"
+      token_secret: "${env:PROXMOX_API_TOKEN_SECRET}"
+      verify_ssl: false
+      node: seed3
+      template_vmid: 9200
+      full_clone: false
+      guest_cidr: 192.168.0.0/24
+      ready_timeout_s: 900
+      novnc_enabled: false
+
+  cpu-free:
+    provider: proxmox
+    image: ale-win10
+    proxmox:
+      api_url: https://127.0.0.1:8006
+      token_id: "${env:PROXMOX_API_TOKEN_ID}"
+      token_secret: "${env:PROXMOX_API_TOKEN_SECRET}"
+      verify_ssl: false
+      node: seed3
+      template_vmid: 9001
+      full_clone: false
+      guest_cidr: 192.168.0.0/24
+      ready_timeout_s: 900
+
+task_data_source: baked_in_sandbox
+output_path: local
