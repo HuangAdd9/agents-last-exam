@@ -29,6 +29,10 @@ logger = logging.getLogger(__name__)
 # chunked (see download_to_local), so this bounds the number of in-flight cua
 # RPCs, not the payload size.
 _PULL_CONCURRENCY = 8
+_OUTPUT_PULL_TIMEOUT_S = 180
+_DEPENDENCY_DIRS = frozenset({'.git', '.venv', 'venv', 'node_modules', '__pycache__',
+                              '.cache', '.conda', 'site-packages', '.flash_runtime',
+                              '.pytest_cache', '.mypy_cache'})
 _QEMU_SHARE_COPY_TIMEOUT_S = 3600
 _GCS_PUSH_TIMEOUT_S = 3600
 _S3_PUSH_TIMEOUT_S = 3600
@@ -230,6 +234,33 @@ async def pull_to_host(
     *,
     dest_dir: Path,
 ) -> dict[str, Any]:
+    """Bound best-effort output collection; never hold a saved trajectory hostage."""
+    if os.environ.get("ALE_OUTPUT_PULL_EXTERNAL") == "developer-stage":
+        return {"skipped": True, "reason": "provider_developer_artifact_staging",
+                "transport": "developer-stage", "vm_path": _output_dir(sandbox, task_data)}
+    # Local docker cp / QEMU share copy have their own transport lifecycle; the
+    # short budget addresses the remote per-file cua bottleneck only.
+    if _docker_container(sandbox) or _qemu_exchange(sandbox):
+        return await _pull_to_host(sandbox, task_data, dest_dir=dest_dir)
+    budget = float(os.environ.get("ALE_OUTPUT_PULL_TIMEOUT_S", _OUTPUT_PULL_TIMEOUT_S))
+    if budget <= 0:
+        raise ValueError("ALE_OUTPUT_PULL_TIMEOUT_S must be positive")
+    try:
+        async with asyncio.timeout(budget):
+            return await _pull_to_host(sandbox, task_data, dest_dir=dest_dir)
+    except TimeoutError:
+        files, size = _count_output_files(dest_dir)
+        return {"transport": "partial", "vm_path": _output_dir(sandbox, task_data),
+                "files": files, "bytes": size,
+                "errors": [{"error": f"output collection exceeded {budget:g}s; existing files retained"}]}
+
+
+async def _pull_to_host(
+    sandbox: SandboxHandle,
+    task_data: TaskDataSpec,
+    *,
+    dest_dir: Path,
+) -> dict[str, Any]:
     """Copy the sandbox output tree into the host run directory."""
     src = _output_dir(sandbox, task_data)
 
@@ -271,8 +302,13 @@ async def pull_to_host(
     # download the files concurrently — one slow/large file no longer blocks the
     # rest, and many small files no longer serialise into a long tail.
     jobs: list[tuple[str, Path]] = []
+    excluded = 0
     for entry in entries:
         rel = entry["relpath"]
+        parts = Path(rel.replace("\\", "/")).parts
+        if any(p in _DEPENDENCY_DIRS or p.startswith('.venv') for p in parts):
+            excluded += 1
+            continue
         if entry.get("is_dir"):
             (dest_dir / rel.replace("\\", "/")).mkdir(parents=True, exist_ok=True)
             continue
@@ -323,6 +359,7 @@ async def pull_to_host(
         "files": files,
         "bytes": total_bytes,
         "errors": errors,
+        "excluded_dependency_entries": excluded,
     }
 
 
