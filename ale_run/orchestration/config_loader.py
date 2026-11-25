@@ -519,6 +519,7 @@ def _build_per_snapshot_env(raw: dict[str, Any], path: str) -> EnvironmentSpec:
     aliyun_snaps: dict[str, Any] = {}   # tag -> {image, gpu, zones(zone ids)}
     aliyun_creds: dict[str, Any] = {}   # region/sg/ram_role/... (reconciled, last wins)
     docker_cfg: dict[str, Any] | None = None
+    docker_snapshot_cfg: dict[str, dict[str, Any]] = {}
     qemu_snaps: dict[str, Any] = {}
     proxmox_snaps: dict[str, Any] = {}
     proxmox_connection: dict[str, Any] = {}
@@ -563,16 +564,35 @@ def _build_per_snapshot_env(raw: dict[str, Any], path: str) -> EnvironmentSpec:
                 snap_entry["resolution"] = entry["resolution"]
             aliyun_snaps[str(tag)] = snap_entry
         elif kind == "docker":
-            # docker carries just the image NAME + sizing knobs; the provider
-            # resolves the container ref + port from the Image entry. Multiple
-            # docker snapshots must agree.
+            # Docker sizing is shared, while image_ref/image_revision may vary
+            # per task-card snapshot. The router builds one provider per such
+            # snapshot so private task images can coexist in one experiment.
             this = {"image": str(image), **knobs}
-            if docker_cfg is not None and docker_cfg != this:
+            if docker_cfg is None:
+                docker_cfg = {"image": str(image)}
+            elif docker_cfg.get("image") != str(image):
                 raise ValueError(
-                    f"environment {path!r}: multiple docker snapshots with "
-                    f"differing config is not supported ({docker_cfg} vs {this})"
+                    f"environment {path!r}: docker snapshots must use one image registry key"
                 )
-            docker_cfg = this
+            # Image identity and security/runtime switches may legitimately
+            # differ per task image.  Keep sizing/resource knobs shared, but
+            # carry these routing knobs through snapshot_provider_configs so
+            # one DinD task can be privileged without making every task
+            # privileged.
+            snapshot_keys = {
+                "image_ref", "image_revision", "privileged", "enable_dind",
+            }
+            common = {k: v for k, v in this.items()
+                      if k not in {"image", *snapshot_keys}}
+            base_common = {k: v for k, v in docker_cfg.items() if k != "image"}
+            if base_common and common != base_common:
+                raise ValueError(
+                    f"environment {path!r}: docker snapshots differ in shared sizing config"
+                )
+            docker_cfg.update(common)
+            docker_snapshot_cfg[str(tag)] = {
+                k: v for k, v in this.items() if k in snapshot_keys
+            }
         elif kind == "qemu":
             if not knobs.get("disk_source"):
                 raise KeyError(
@@ -661,6 +681,7 @@ def _build_per_snapshot_env(raw: dict[str, Any], path: str) -> EnvironmentSpec:
     return EnvironmentSpec(
         provider_specs=provider_specs,
         snapshot_kind=snapshot_kind,
+        snapshot_provider_configs=docker_snapshot_cfg,
         default_kind=None,
     )
 

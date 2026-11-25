@@ -218,7 +218,7 @@ def _bridge_installed(bridge_dir: str) -> bool:
     return os.path.isfile(index) and os.path.isdir(sdk_dir)
 
 
-async def _ensure_bridge_at(src_dir: Path, target_dir: str, *, what: str) -> str:
+async def _ensure_bridge_at(src_dir: Path, target_dir: str, *, what: str, offline: bool = False) -> str:
     """Refresh bridge sources and install missing or changed dependencies.
 
     Shared implementation behind :func:`ensure_cua_mcp_server` (GUI bridge into
@@ -257,6 +257,9 @@ async def _ensure_bridge_at(src_dir: Path, target_dir: str, *, what: str) -> str
             )
         else:
             needs_install |= source_manifest.read_bytes() != target_manifest.read_bytes()
+
+    if needs_install and offline:
+        raise RuntimeError(f"Prepared {what} bridge dependencies are missing or manifests changed")
 
     logger.info("ensure_%s_mcp_server: refreshing bridge %s → %s", what, src_dir, target_dir)
 
@@ -310,7 +313,7 @@ async def _ensure_bridge_at(src_dir: Path, target_dir: str, *, what: str) -> str
     return target_dir
 
 
-async def ensure_cua_mcp_server(sandbox: "SandboxHandle") -> str:
+async def ensure_cua_mcp_server(sandbox: "SandboxHandle", *, offline: bool = False) -> str:
     """Ensure the cua (GUI) MCP bridge is installed at ``sandbox.mcp_server_dir``.
 
     Refreshes sources while reusing matching prebaked dependencies.
@@ -320,7 +323,7 @@ async def ensure_cua_mcp_server(sandbox: "SandboxHandle") -> str:
     image is purely a speed optimization; this dynamic install is the correctness
     guarantee on a thin image. Returns the resolved ``mcp_server_dir``.
     """
-    return await _ensure_bridge_at(_CUA_BRIDGE_SRC, sandbox.mcp_server_dir, what="cua")
+    return await _ensure_bridge_at(_CUA_BRIDGE_SRC, sandbox.mcp_server_dir, what="cua", offline=offline)
 
 
 async def ensure_cua_mcp_server_at(target_dir: str) -> str:

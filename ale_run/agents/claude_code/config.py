@@ -76,6 +76,8 @@ class ClaudeCodeConfig:
     ``CLAUDE_CODE_MAX_OUTPUT_TOKENS`` environment variable. ``None`` leaves the
     CLI default unchanged."""
     disabled_tools: tuple[str, ...] = ()
+    disable_web_search: bool = False
+    """Exclude native WebSearch and WebFetch, matching Harbor's option."""
     dangerously_skip_permissions: bool = True
 
     otel_enabled: bool = True

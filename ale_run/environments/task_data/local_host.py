@@ -150,6 +150,26 @@ async def _proxmox_copy_dirs(
         await sandbox.rm([stage_dir])
 
 
+async def _docker_mkdir(sandbox: SandboxHandle, path: str) -> None:
+    """Create a staging path through Docker itself.
+
+    The CUA mkdir RPC can race with container startup/cleanup at high
+    concurrency.  Reference staging happens immediately before ``docker cp``;
+    use the provider's container handle as the authoritative filesystem so the
+    cp destination's parent is guaranteed to exist.
+    """
+    proc = await asyncio.create_subprocess_exec(
+        "docker", "exec", "--user", "0", sandbox.id, "mkdir", "-p", path,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    )
+    _, err = await proc.communicate()
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"docker mkdir {sandbox.id}:{path} failed (rc={proc.returncode}): "
+            f"{err.decode(errors='replace')[:300]}"
+        )
+
+
 async def stage_input(
     sandbox: SandboxHandle,
     task_data: TaskDataSpec,
@@ -250,6 +270,13 @@ async def stage_reference(
         return report
     base = task_subdir(sandbox, task_data)
     target = join(sandbox, base, "reference")
+    # ``docker cp SRC CONTAINER:DEST`` requires DEST's parent to exist when
+    # the source directory is copied into a fresh task workspace.  Normally
+    # stage_input has already created it, but reference-only tasks and retries
+    # can reach this phase with no input staging (or after cleanup).  Create
+    # both levels explicitly so staging is idempotent and never depends on a
+    # stale container directory.
+    await _docker_mkdir(sandbox, base)
     await sandbox.rm([target])  # defend against stale reference from a prior run
     if provider == "docker":
         await _docker_cp(ref, sandbox.id, target)

@@ -220,7 +220,17 @@ async def run_one_unit(
 
             # Resolve the provider for THIS task's snapshot (per-snapshot
             # routing: an environment can mix backends across snapshots).
-            provider = router.provider_for(env_spec.snapshot)
+            if env_spec.image_ref or env_spec.image_revision:
+                provider = router.provider_for(
+                    env_spec.snapshot,
+                    image_ref=env_spec.image_ref,
+                    image_revision=env_spec.image_revision,
+                )
+            else:
+                # Keep compatibility with lightweight test routers and
+                # third-party routers implementing the original one-argument
+                # provider_for(snapshot) protocol.
+                provider = router.provider_for(env_spec.snapshot)
 
             # ============================================================
             # Phase 0 — provision the sandbox. Single-shot: with task data
@@ -558,6 +568,21 @@ async def run_one_unit(
 
     finally:
         # Phase 4 — cleanup. Both branches are best-effort; never raise here.
+        if env is not None and provider is not None:
+            try:
+                # Acquisition can fail before reset_async() sets a sandbox.
+                # Avoid the guarded property here so diagnostics do not hide
+                # the original setup error.
+                sandbox = getattr(env, "_sandbox", None)
+                if sandbox is not None and sandbox.metadata.get("provider") == "qemu":
+                    report = await asyncio.wait_for(
+                        provider.collect_diagnostics(sandbox, writer.run_dir / "diagnostics"),
+                        timeout=25,
+                    )
+                    writer.emit_event("diagnostics_collected", report=report)
+            except Exception as diagnostic_exc:
+                writer.emit_event("diagnostics_failed", error=str(diagnostic_exc))
+                logger.exception("VM diagnostics unavailable")
         if task_driver is not None:
             try:
                 await task_driver.close()
@@ -673,6 +698,8 @@ def _build_env_spec(task_meta: dict[str, Any], *, unit: RunUnit | None = None) -
         task_id=task_id,
         harness=harness,
         model_tag=model_tag,
+        image_ref=task_meta.get("image_ref"),
+        image_revision=task_meta.get("image_revision"),
     )
 
 

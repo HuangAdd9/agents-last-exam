@@ -71,6 +71,7 @@ class EnvironmentSpec:
 
     provider_specs: dict[str, ProviderSpec] = field(default_factory=dict)
     snapshot_kind: dict[str, str] = field(default_factory=dict)
+    snapshot_provider_configs: dict[str, dict[str, Any]] = field(default_factory=dict)
     default_kind: str | None = None
 
     def kind_for(self, snapshot: str) -> str:

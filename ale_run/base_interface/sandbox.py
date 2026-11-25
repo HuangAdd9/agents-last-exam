@@ -72,6 +72,12 @@ class SandboxSpec:
     task_id: str = ""
     harness: str = ""
     model_tag: str = ""
+    # Optional task-level Docker image pin.  The task distribution manifest
+    # may carry a private image that is more specific than the logical
+    # task-card snapshot (for example ``cpu-free-ubuntu``).  Docker uses
+    # these fields as an override; cloud/QEMU providers ignore them.
+    image_ref: str | None = None
+    image_revision: str | None = None
 
 
 # ============================================================================
@@ -249,6 +255,16 @@ class Provider(abc.ABC):
 
     async def cancel_external(self, sandbox: SandboxHandle) -> None:
         return None
+
+    async def inspect_health(self, sandbox: SandboxHandle) -> dict[str, Any]:
+        """Inspect independently of the guest RPC, when supported by the provider."""
+        return {"guest": "unknown", "error": "independent health probe unsupported"}
+
+    async def collect_diagnostics(
+        self, sandbox: SandboxHandle, destination: Path,
+    ) -> dict[str, Any]:
+        """Persist diagnostics before release, without changing sandbox state."""
+        return {"error": "diagnostic collection unsupported"}
 
 
 # ============================================================================

@@ -68,6 +68,51 @@ class TaskLoader:
             raise FileNotFoundError(f"main.py not found at {self.main_py}")
         self._module = None
 
+    def _load_image_binding(self) -> dict[str, Any] | None:
+        """Load the optional task-to-image distribution manifest.
+
+        ``image-bindings.json`` is produced alongside the task data, rather
+        than committed inside the ALE source checkout.  Keep discovery
+        explicit and deterministic so ordinary public runs remain unchanged:
+        an environment variable wins, followed by the standard distributed
+        layout under ``/data/ale-eval`` and ancestors of the task checkout.
+        """
+        relative_task = None
+        parts = self.task_path.parts
+        if "tasks" in parts:
+            relative_task = "/".join(parts[parts.index("tasks") + 1 :])
+        if not relative_task:
+            return None
+
+        candidates: list[Path] = []
+        configured = os.environ.get("ALE_IMAGE_BINDINGS", "").strip()
+        if configured:
+            candidates.append(Path(configured).expanduser())
+        candidates.append(Path("/data/ale-eval/tasks_gen/image-bindings.json"))
+        # This also supports local test/checkouts such as <repo>/tasks and
+        # <repo>/tasks_gen without requiring an environment variable.
+        for parent in (self.task_path, *self.task_path.parents):
+            candidates.append(parent / "tasks_gen" / "image-bindings.json")
+
+        seen: set[Path] = set()
+        for manifest in candidates:
+            manifest = manifest.resolve()
+            if manifest in seen or not manifest.is_file():
+                continue
+            seen.add(manifest)
+            try:
+                data = json.loads(manifest.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                logger.warning("Cannot read image binding manifest %s: %s", manifest, exc)
+                continue
+            if not isinstance(data, dict):
+                logger.warning("Ignoring non-object image binding manifest %s", manifest)
+                continue
+            binding = data.get(relative_task)
+            if isinstance(binding, dict):
+                return binding
+        return None
+
     def _load_task_variant(self, variant_index: int = 0) -> Any | None:
         module = self._load_module()
         load_fn = getattr(module, "load", None)
@@ -259,6 +304,24 @@ class TaskLoader:
                         f"vm.machineType={raw_mt!r}; expected a standard GCE "
                         "machine type like 'n2-highmem-16' or 'n2-custom-8-16384'"
                     )
+
+        # A task-level private image is more specific than the logical
+        # snapshot in task_card.json.  Keep the logical snapshot for provider
+        # selection, and pass the manifest's image ref/revision separately so
+        # Docker can override the image without changing task source files.
+        binding = self._load_image_binding()
+        if binding:
+            source_image = binding.get("source_image")
+            expected_image_id = binding.get("expected_image_id")
+            if source_image:
+                task_info["image_ref"] = str(source_image)
+                if expected_image_id:
+                    task_info["image_revision"] = str(expected_image_id)
+                task_info["image_binding"] = {
+                    "source_image": str(source_image),
+                    "expected_image_id": str(expected_image_id)
+                    if expected_image_id else None,
+                }
         return task_info
 
     def _parse_positive_int(self, field_name: str, raw_value: Any) -> int:

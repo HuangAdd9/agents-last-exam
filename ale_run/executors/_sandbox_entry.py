@@ -37,6 +37,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("sandbox_entry")
 _PROCESS_STOP_TIMEOUT_S = 20.0
+_BACKGROUND_DRAIN_TIMEOUT_S = 30.0
 _CHILD_REAP_INTERVAL_S = 0.5
 _SYSTEMD_RUNTIME = Path("/run/systemd/system")
 
@@ -285,9 +286,13 @@ class _WindowsJob:
 
 
 def supervise(spec_path: Path, spec: dict, *, protected: bool = False) -> dict:
-    """Wait for the worker and its descendants within one shared time budget."""
+    """Wait for the worker, allow bounded background drain, then confirm cleanup."""
+    from ._guest_control import GuestControl
+
     work_dir = Path(spec["work_dir"])
     token = spec["run_token"]
+    control = GuestControl(spec.get("control_guest_dir"), token)
+    control.tick(0, "starting", None)
     worker = None
     process_tree = None
     stopped = False
@@ -319,8 +324,15 @@ def supervise(spec_path: Path, spec: dict, *, protected: bool = False) -> dict:
             worker.stdin.write(b"1")
             worker.stdin.close()
             worker_finished = False
+            drain_deadline = None
             next_reap = started
+            sequence = 0
+            next_heartbeat = started
             while True:
+                if time.monotonic() >= next_heartbeat:
+                    sequence += 1
+                    control.tick(sequence, "draining" if worker_finished else "running", worker.pid)
+                    next_heartbeat = time.monotonic() + 5
                 if not worker_finished and worker.poll() is not None:
                     try:
                         out = json.loads((work_dir / "_worker_result.json").read_text())
@@ -333,9 +345,10 @@ def supervise(spec_path: Path, spec: dict, *, protected: bool = False) -> dict:
                         }
                         logger.error("%s", out["error"])
                     worker_finished = True
+                    drain_deadline = time.monotonic() + _BACKGROUND_DRAIN_TIMEOUT_S
                     if out.get("status") == "timeout" or out.get("phase") == "install":
                         break
-                if stop_path.exists() and stop_path.read_text() == token:
+                if control.stop_requested.is_set() or (stop_path.exists() and stop_path.read_text() == token):
                     prior_error = out.get("error") if worker_finished else None
                     out.update(ok=False, status="failed", error="solver stop requested" + (
                         f"; prior error: {prior_error}" if prior_error else ""
@@ -352,9 +365,13 @@ def supervise(spec_path: Path, spec: dict, *, protected: bool = False) -> dict:
                     if now >= next_reap:
                         process_tree.reap_exited_children(exclude_pid=worker.pid)
                         next_reap = now + _CHILD_REAP_INTERVAL_S
-                if worker_finished and process_tree.is_empty():
-                    drained = True
-                    break
+                if worker_finished:
+                    if process_tree.is_empty():
+                        drained = True
+                        break
+                    if time.monotonic() >= drain_deadline:
+                        logger.warning("worker finished; reclaiming remaining background processes")
+                        break
                 time.sleep(0.05)
     except BaseException as exc:
         logger.exception("sandbox supervisor failed")
@@ -391,6 +408,7 @@ def supervise(spec_path: Path, spec: dict, *, protected: bool = False) -> dict:
         temporary.write_text(json.dumps(report))
         temporary.replace(report_path)
     out["duration_s"] = time.monotonic() - started
+    control.finish(report, out)
     return out
 
 

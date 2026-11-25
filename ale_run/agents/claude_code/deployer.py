@@ -49,6 +49,7 @@ logger = logging.getLogger(__name__)
 
 _POLL_INTERVAL_S = 2.0
 _TERM_GRACE_S = 2.0
+_RESULT_EXIT_GRACE_S = 30.0
 
 _VERSION_RE = re.compile(r"(\d+\.\d+\.\d+)")
 
@@ -136,7 +137,17 @@ class ClaudeCodeDeployer(BaseAgentDeployer):
             from ale_run.agents._bootstrap import ensure_npm
             npm = await ensure_npm()
         home = os.path.expanduser("~")
-        prefix = os.path.join(home, ".local")
+        # Some task images ship ``~/.local`` as a root-owned directory.  The
+        # sandbox runs as an unprivileged user, so npm's global install would
+        # fail with EACCES before Claude Code can start.  Keep the usual
+        # prefix when it is writable and otherwise use the user-owned fallback
+        # used by the shared Node bootstrap.
+        preferred_prefix = os.path.join(home, ".local")
+        if os.path.isdir(preferred_prefix) and os.access(preferred_prefix, os.W_OK):
+            prefix = preferred_prefix
+        else:
+            prefix = os.path.join(home, ".npm-global")
+            os.makedirs(prefix, exist_ok=True)
         env = {**os.environ, "npm_config_cache": os.path.join(home, ".npm-ale")}
         # cfg.cli_version is the full npm spec, e.g.
         # "@anthropic-ai/claude-code@2.1.170". --force so a same-version
@@ -178,13 +189,18 @@ class ClaudeCodeDeployer(BaseAgentDeployer):
         # with an older claude pre-baked: the next run detects the mismatch
         # and installs the pinned version under ~/.local, prepended on PATH
         # so it shadows the baked copy.
-        claude_path = shutil.which("claude")
         expected = _expected_version(cfg.cli_version)
+        prepared = (sandbox.metadata or {}).get("prepared_tools")
+        if prepared and prepared["claude_version"] != expected:
+            raise RuntimeError("Prepared CLI version differs from the agent's pinned version")
+        claude_path = prepared["claude_path"] if prepared else shutil.which("claude")
         installed = (
             await asyncio.to_thread(_installed_version, claude_path)
             if claude_path else None
         )
         stale = bool(expected and installed != expected)
+        if prepared and (not claude_path or stale):
+            raise RuntimeError("Verified offline CLI is missing or has changed")
         if not claude_path or stale:
             if claude_path:
                 logger.info(
@@ -231,7 +247,7 @@ class ClaudeCodeDeployer(BaseAgentDeployer):
         # 4. Ensure the cua MCP bridge is installed at sandbox.mcp_server_dir
         # (idempotent: no-op when prebaked, install when missing).
         from ale_run.agents._bootstrap import cua_bridge_env, ensure_cua_mcp_server
-        await ensure_cua_mcp_server(sandbox)
+        await ensure_cua_mcp_server(sandbox, offline=bool(prepared))
 
         # 5. MCP config. Paths reference the sandbox's baked node +
         # mcp_server_dir — these are valid because the deployer runs INSIDE
@@ -294,6 +310,9 @@ class ClaudeCodeDeployer(BaseAgentDeployer):
         env = self._build_env(cfg, otel_endpoint=otel_endpoint)
 
         t0 = time.monotonic()
+        result_event = None
+        result_seen_at = None
+        reclaimed_after_result = False
         try:
             # Open output files; subprocess inherits the descriptors and the
             # parent's references can close after spawn (the child keeps them).
@@ -321,8 +340,36 @@ class ClaudeCodeDeployer(BaseAgentDeployer):
             # budget fires we are cancelled mid-await; reap the child before
             # propagating so it cannot outlive the run.
             try:
-                while proc.poll() is None:
-                    await asyncio.sleep(_POLL_INTERVAL_S)
+                with transcript_file.open("rb") as transcript:
+                    while proc.poll() is None:
+                        while result_event is None:
+                            offset = transcript.tell()
+                            line = transcript.readline()
+                            if not line or not line.endswith(b"\n"):
+                                transcript.seek(offset)
+                                break
+                            try:
+                                event = json.loads(line)
+                            except (ValueError, UnicodeDecodeError):
+                                continue
+                            if isinstance(event, dict) and event.get("type") == "result":
+                                result_event = event
+                                result_seen_at = time.monotonic()
+                        if (result_seen_at is not None
+                                and time.monotonic() - result_seen_at >= _RESULT_EXIT_GRACE_S):
+                            logger.warning("claude_code: final result received; reclaiming stalled CLI")
+                            reclaimed_after_result = True
+                            try:
+                                proc.terminate()
+                            except ProcessLookupError:
+                                pass
+                            try:
+                                await asyncio.to_thread(proc.wait, timeout=_TERM_GRACE_S)
+                            except subprocess.TimeoutExpired:
+                                proc.kill()
+                                await asyncio.to_thread(proc.wait, timeout=_TERM_GRACE_S)
+                            break
+                        await asyncio.sleep(_POLL_INTERVAL_S)
             except asyncio.CancelledError:
                 try:
                     proc.terminate()
@@ -347,6 +394,11 @@ class ClaudeCodeDeployer(BaseAgentDeployer):
         duration_s = time.monotonic() - t0
         exit_code = proc.returncode
         status = "completed" if exit_code == 0 else "failed"
+        if reclaimed_after_result:
+            status = (
+                "completed" if result_event.get("subtype") == "success"
+                and result_event.get("is_error") is False else "failed"
+            )
         error: str | None = None
         if status == "failed":
             error = self._diagnose_failure(
@@ -397,8 +449,11 @@ class ClaudeCodeDeployer(BaseAgentDeployer):
             argv += ["--max-budget-usd", str(cfg.max_budget_usd)]
         if cfg.dangerously_skip_permissions:
             argv += ["--dangerously-skip-permissions"]
-        for tool in cfg.disabled_tools:
-            argv += ["--disallowedTools", tool]
+        disabled_tools = list(cfg.disabled_tools)
+        if cfg.disable_web_search:
+            disabled_tools.extend(("WebSearch", "WebFetch"))
+        if disabled_tools:
+            argv += ["--disallowedTools", ",".join(dict.fromkeys(disabled_tools))]
         return argv
 
     def _build_env(
@@ -614,6 +669,7 @@ class ClaudeCodeDeployer(BaseAgentDeployer):
 
     @classmethod
     def _consume_event(cls, event: dict, builder: TrajectoryBuilder) -> None:
+        first_new_step = len(builder.trajectory.steps)
         etype = event.get("type")
         if etype == "assistant":
             cls._consume_assistant(event, builder)
@@ -623,6 +679,11 @@ class ClaudeCodeDeployer(BaseAgentDeployer):
             builder.trajectory.extra.setdefault("system_events", []).append(event)
         elif etype == "result":
             builder.trajectory.extra["result"] = event
+        timestamp = event.get("timestamp")
+        if isinstance(timestamp, str) and timestamp.strip():
+            # Artifact parsing happens after the run; retain the recorded time.
+            for step in builder.trajectory.steps[first_new_step:]:
+                step.timestamp = timestamp
 
     @staticmethod
     def _consume_assistant(event: dict, builder: TrajectoryBuilder) -> None:

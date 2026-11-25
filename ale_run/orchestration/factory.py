@@ -34,7 +34,6 @@ _AGENT_FQNS: dict[str, str] = {
     "gemini_cli": "ale_run.agents.gemini_cli.deployer.GeminiCliDeployer",
     "antigravity_cli": "ale_run.agents.antigravity_cli.deployer.AntigravityCliDeployer",
     "grok_build": "ale_run.agents.grok_build.deployer.GrokBuildDeployer",
-    "deepseek_harness": "ale_run.agents.deepseek_harness.deployer.DeepSeekHarnessDeployer",
     "grok_cli": "ale_run.agents.grok_cli.deployer.GrokCliDeployer",
     "kimi_code": "ale_run.agents.kimi_code.deployer.KimiCodeDeployer",
     "muse_code": "ale_run.agents.muse_code.deployer.MuseCodeDeployer",
@@ -51,7 +50,6 @@ _AGENT_FQNS: dict[str, str] = {
     "qwen_code": "ale_run.agents.qwen_code.deployer.QwenCodeDeployer",
     "zcode": "ale_run.agents.zcode.deployer.ZCodeDeployer",
     "dummy": "ale_run.agents.dummy.deployer.DummyDeployer",
-    "scripted_demo": "ale_run.agents.scripted_demo.deployer.ScriptedDemoDeployer",
 }
 
 
@@ -104,7 +102,7 @@ def _config_class_for(deployer_cls: type) -> type:
     return cls
 
 
-def resolve_agent(spec: AgentSpec) -> tuple[type, type]:
+def resolve_agent(spec: "AgentSpec") -> tuple[type, type]:
     """Resolve an AgentSpec to ``(deployer_cls, config_cls)``.
 
     Raises if ``spec.class_`` isn't registered AND isn't an importable FQN.
@@ -174,37 +172,27 @@ def build_config(config_cls: type, raw: dict[str, Any]) -> Any:
 # ----------------------------------------------------------------------
 
 
-def build_provider(spec: ProviderSpec) -> Provider:
+def build_provider(spec: "ProviderSpec") -> "Provider":
     """Build a Provider instance from a ProviderSpec."""
     kind = spec.kind
     if kind == "gcloud":
         from ..environments.providers.gcloud import GcloudProvider
-
         return GcloudProvider(spec.config)
     if kind == "aws":
         from ..environments.providers.aws import AwsProvider
-
         return AwsProvider(spec.config)
     if kind == "aliyun":
         from ..environments.providers.aliyun import AliyunProvider
-
         return AliyunProvider(spec.config)
     if kind == "static":
         from ..environments.providers.static import StaticProvider
-
         return StaticProvider(spec.config)
     if kind == "docker":
         from ..environments.providers.docker import DockerProvider
-
         return DockerProvider(spec.config)
     if kind == "qemu":
         from ..environments.providers.qemu import QemuProvider
-
         return QemuProvider(spec.config)
-    if kind == "proxmox":
-        from ..environments.providers.proxmox import ProxmoxProvider
-
-        return ProxmoxProvider(spec.config)
     raise NotImplementedError(f"provider kind {kind!r} is not implemented")
 
 
@@ -217,12 +205,43 @@ class EnvironmentRouter:
     safely serves all its snapshots concurrently).
     """
 
-    def __init__(self, env: EnvironmentSpec):
+    def __init__(self, env: "EnvironmentSpec"):
         self._env = env
-        self._cache: dict[str, Provider] = {}
+        self._cache: dict[tuple[object, ...], "Provider"] = {}
 
-    def provider_for(self, snapshot: str) -> Provider:
-        kind = self._env.kind_for(snapshot)
-        if kind not in self._cache:
-            self._cache[kind] = build_provider(self._env.provider_specs[kind])
-        return self._cache[kind]
+    def provider_for(
+        self,
+        snapshot: str,
+        *,
+        image_ref: str | None = None,
+        image_revision: str | None = None,
+    ) -> "Provider":
+        # A distributed task manifest may pin a private Docker image while
+        # the task card still names a logical snapshot.  Use Docker as the
+        # fallback provider only when such an override is present; cloud and
+        # QEMU runs must continue to fail loudly on an unmapped snapshot.
+        try:
+            kind = self._env.kind_for(snapshot)
+        except KeyError:
+            if image_ref and "docker" in self._env.provider_specs:
+                kind = "docker"
+            else:
+                raise
+        override = self._env.snapshot_provider_configs.get(snapshot)
+        task_override = {}
+        if kind == "docker":
+            if image_ref:
+                task_override["image_ref"] = image_ref
+            if image_revision:
+                task_override["image_revision"] = image_revision
+        merged_override = {**(override or {}), **task_override}
+        cache_key = (kind, snapshot, tuple(sorted(merged_override.items())))
+        if cache_key not in self._cache:
+            base = self._env.provider_specs[kind]
+            if merged_override:
+                config = {**base.config, **merged_override}
+                spec = type(base)(kind=kind, config=config)
+            else:
+                spec = base
+            self._cache[cache_key] = build_provider(spec)
+        return self._cache[cache_key]

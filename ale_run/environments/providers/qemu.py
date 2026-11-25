@@ -56,6 +56,7 @@ class QemuSnapshotConfig:
     image_cache_dir: Path
     runner_image: str = _DEFAULT_RUNNER_IMAGE
     runner_pull_policy: RunnerPullPolicy = "missing"
+    network: str | None = None
     image_revision: str | None = None
     vcpus: int = 0
     memory_gb: int = 0
@@ -63,6 +64,8 @@ class QemuSnapshotConfig:
     bind_address: str = "127.0.0.1"
     ready_timeout_s: int = 900
     readiness_poll_interval_s: float = 5
+    tools_archive: Path | None = None
+    tools_sha256: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -258,6 +261,20 @@ def _build_snapshot_config(raw: dict[str, Any]) -> QemuSnapshotConfig:
     image_revision = str(raw.get("image_revision") or "").strip() or None
     if image_revision and not disk_source.startswith("hf://"):
         raise ValueError("qemu image_revision is valid only for an hf:// disk_source")
+    network = raw.get("network")
+    if network is not None and (
+        not isinstance(network, str)
+        or not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]*", network)
+        or network in {"host", "none"}
+    ):
+        raise ValueError("qemu network must name a Docker bridge network")
+
+    tools_archive = raw.get("tools_archive")
+    tools_sha256 = raw.get("tools_sha256")
+    if bool(tools_archive) != bool(tools_sha256) or (
+        tools_sha256 and not _SHA256_RE.fullmatch(str(tools_sha256))
+    ):
+        raise ValueError("qemu tools_archive requires a pinned tools_sha256")
 
     return QemuSnapshotConfig(
         image=str(raw["image"]),
@@ -266,6 +283,7 @@ def _build_snapshot_config(raw: dict[str, Any]) -> QemuSnapshotConfig:
         image_cache_dir=image_cache_dir,
         runner_image=str(raw.get("runner_image") or _DEFAULT_RUNNER_IMAGE),
         runner_pull_policy=cast(RunnerPullPolicy, runner_pull_policy),
+        network=network,
         image_revision=image_revision,
         vcpus=vcpus,
         memory_gb=memory_gb,
@@ -273,6 +291,8 @@ def _build_snapshot_config(raw: dict[str, Any]) -> QemuSnapshotConfig:
         bind_address=_validate_bind_address(str(raw.get("bind_address") or "127.0.0.1")),
         ready_timeout_s=ready_timeout_s,
         readiness_poll_interval_s=readiness_poll_interval_s,
+        tools_archive=_expand_path(str(tools_archive)) if tools_archive else None,
+        tools_sha256=str(tools_sha256) if tools_sha256 else None,
     )
 
 
@@ -621,6 +641,7 @@ class QemuProvider(Provider):
                 "vcpus": vcpus,
                 "memory_gb": memory_gb,
                 "runner_image": snapshot.runner_image,
+                "docker_network": snapshot.network or "bridge",
             }
             sandbox = SandboxHandle(
                 id=name,
@@ -629,6 +650,11 @@ class QemuProvider(Provider):
                 **image.sandbox_paths(),
                 metadata=metadata,
             )
+            if snapshot.tools_archive is not None:
+                from ..prepared_tools import stage_tools
+
+                await stage_tools(sandbox, snapshot.tools_archive, snapshot.tools_sha256)
+                logger.info("QEMU sandbox %s prepared tools verified: %s", name, metadata["prepared_tools"])
             if sandbox.is_linux and self._guest_network_mtu < _DEFAULT_GUEST_MTU:
                 await self._configure_guest_mtu(sandbox, self._guest_network_mtu)
                 metadata["network_mtu"] = self._guest_network_mtu
@@ -756,6 +782,18 @@ class QemuProvider(Provider):
         slot_root = sandbox.metadata.get("slot_root")
         if slot_root:
             await asyncio.to_thread(_remove_slot_root, Path(slot_root))
+
+    async def inspect_health(self, sandbox: SandboxHandle) -> dict[str, Any]:
+        from ..qemu_control import inspect_health
+
+        return await inspect_health(sandbox)
+
+    async def collect_diagnostics(
+        self, sandbox: SandboxHandle, destination: Path,
+    ) -> dict[str, Any]:
+        from ..qemu_control import collect_diagnostics
+
+        return await collect_diagnostics(sandbox, destination)
 
     def open_session(self, sandbox: SandboxHandle) -> Any:
         from cua_bench.computers.remote import RemoteDesktopSession
@@ -1386,6 +1424,14 @@ class QemuProvider(Provider):
             "--env",
             "VM_NET_IP=172.30.0.2",
         ]
+        if snapshot.network:
+            # 网络由宿主脚本整批管理；每题只加入，不负责删除共享网络。
+            _, driver, _ = await _run_docker(
+                "network", "inspect", "--format", "{{.Driver}}", snapshot.network,
+            )
+            if driver != "bridge":
+                raise ValueError("qemu network must use the Docker bridge driver")
+            run_args.extend(["--network", snapshot.network])
         if guest_os == "linux":
             run_args.extend(
                 [

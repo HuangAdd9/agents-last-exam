@@ -66,7 +66,10 @@ config:
   # (omit the thinking param; required for adaptive models over OpenRouter).
   max_thinking_tokens: 31999
 
-  # Optional tool exclusions passed as repeated --disallowedTools.
+  # Disable native WebSearch/WebFetch for backends without Anthropic server tools.
+  disable_web_search: false
+
+  # Additional tool exclusions passed through --disallowedTools.
   disabled_tools: []
 
   # Pinned npm spec — the deployer probes `claude --version` and (re)installs

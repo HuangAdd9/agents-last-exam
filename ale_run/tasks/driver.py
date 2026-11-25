@@ -13,8 +13,10 @@ simprun's ``TaskEnv.close(force=True) + connect()`` does.
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
 import math
+import shlex
 from typing import Any, Awaitable, Callable, Dict
 
 from cua_bench.computers.remote import RemoteDesktopSession
@@ -261,6 +263,58 @@ def install_resilient_cua_commands(interface: Any, *, os_type: str = "linux") ->
     interface._ale_resilient_commands = True
 
 
+def install_binary_write_file(session: Any, *, os_type: str = "linux") -> None:
+    """Make ``RemoteDesktopSession.write_file`` accept binary payloads.
+
+    ``cua_bench`` currently types ``write_file`` as text and forwards its
+    payload to ``interface.write_text``.  A number of visual/scientific task
+    setup hooks correctly pass ``Path.read_bytes()`` instead, which then fails
+    inside the generic interface with ``bytes has no attribute encode``.
+    Keep the existing text path unchanged and stage bytes as base64 text,
+    decoding them on the VM with the platform's native command.
+    """
+    if getattr(session, "_ale_binary_write_file", False):
+        return
+    original_write_file = session.write_file
+    interface = session.computer.interface
+    is_win = os_type != "linux"
+
+    async def write_file(path: str, content: str | bytes) -> None:
+        if not isinstance(content, bytes):
+            await original_write_file(path, content)
+            return
+
+        encoded = base64.b64encode(content).decode("ascii")
+        staging = f"{path}.ale-b64"
+        await interface.write_text(staging, encoded)
+        if is_win:
+            # PowerShell single-quoted strings escape a quote by doubling it.
+            q_staging = staging.replace("'", "''")
+            q_path = path.replace("'", "''")
+            command = (
+                "powershell -NoProfile -Command "
+                f'"$b=[IO.File]::ReadAllText(\'{q_staging}\').Trim();'
+                f'[IO.File]::WriteAllBytes(\'{q_path}\',[Convert]::FromBase64String($b));'
+                f"Remove-Item -Path '{q_staging}' -Force\""
+            )
+        else:
+            command = (
+                f"base64 -d {shlex.quote(staging)} > {shlex.quote(path)} "
+                f"&& rm -f {shlex.quote(staging)}"
+            )
+        result = await interface.run_command(command)
+        return_code = getattr(result, "returncode", getattr(result, "return_code", 1))
+        if return_code != 0:
+            stderr = getattr(result, "stderr", "") or ""
+            raise RuntimeError(
+                f"write_file binary decode failed for {path}: "
+                f"rc={return_code} stderr={stderr[:200]}"
+            )
+
+    session.write_file = write_file
+    session._ale_binary_write_file = True
+
+
 class TaskDriver:
     """Task setup + evaluate against a pre-opened DesktopSession.
 
@@ -297,6 +351,36 @@ class TaskDriver:
         try:
             os_type = getattr(session, "_os_type", None) or "linux"
             install_resilient_cua_commands(session.computer.interface, os_type=os_type)
+            install_binary_write_file(session, os_type=os_type)
+
+            # Older cua-bench releases expose ``RemoteDesktopSession.run_command``
+            # with only ``command`` and ``check``.  Several task helpers use the
+            # newer documented ``timeout=`` keyword, so adapt the session entry
+            # point instead of changing every task.
+            if not getattr(session, "_ale_timeout_compat", False):
+                original_run_command = session.run_command
+
+                async def run_command_with_timeout(
+                    command: str,
+                    *,
+                    check: bool = True,
+                    timeout: float | None = None,
+                ):
+                    if timeout is None:
+                        return await original_run_command(command, check=check)
+                    try:
+                        timeout_s = float(timeout)
+                    except (TypeError, ValueError) as exc:
+                        raise ValueError("timeout must be a positive number") from exc
+                    if timeout_s <= 0:
+                        raise ValueError("timeout must be a positive number")
+                    return await asyncio.wait_for(
+                        original_run_command(command, check=check),
+                        timeout=timeout_s,
+                    )
+
+                session.run_command = run_command_with_timeout
+                session._ale_timeout_compat = True
         except Exception as e:
             logger.debug("install_resilient_cua_commands skipped: %s", e)
 

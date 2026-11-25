@@ -174,6 +174,104 @@ JSON key. The provider injects the key into the guest after CUA becomes ready,
 and the guest uploads its output directory directly with `gsutil`. Output bytes
 do not pass through CUA or the local exchange directory.
 
+## Independent health and diagnostics
+
+Sandbox execution prepares a token-scoped control directory in the exchange
+share before launch. Linux requires `mount.cifs` and noninteractive sudo; the
+mount must pass a bidirectional handshake or launch fails. Windows uses the
+existing UNC share. The supervisor publishes a progress sequence every five
+seconds, mirrored results, and an explicit process-tree cleanup confirmation.
+Share I/O runs in a daemon thread so an unavailable SMB service cannot block
+the supervisor's deadline or child reaping.
+
+The host accepts heartbeat freshness only after observing sequence advancement
+within 45 seconds on its own monotonic clock. This avoids guest clock skew and
+cached old files. A live supervisor permits continued waiting when CUA is
+unavailable, within the original wall budget. It does not prove that the agent
+is making useful task progress. Stopping uses both CUA and the share; evaluation
+still requires a matching run token and `stopped: true` confirmation.
+
+When CUA liveness fails, the host independently queries Docker state and QMP
+through `docker exec` and runner-local `nc`. QMP reports QEMU execution state
+and KVM availability. QMP `running` alone does not establish guest or solver
+health. No QMP port needs to be published on the host.
+
+Before releasing an acquired QEMU VM, the lifecycle saves
+`<run_dir>/diagnostics/qemu.json`. Collection is bounded to 25 seconds and
+cannot replace the primary run error. The report includes Docker running,
+paused and OOM state, QMP replies, bounded runner/QEMU log tails, recent probe
+history, and available shared guest telemetry. Guest telemetry includes
+memory, pressure, VM counters, network state, CUA `/status`, and a kernel log
+tail when readable. Missing or failed probes are recorded explicitly.
+Docker `OOMKilled: false` does not rule out an OOM inside the guest. The
+collector does not read environment variables, credentials, or agent prompts.
+
+For an existing VM, the read-only diagnostic interface is:
+
+```bash
+uv run python -m ale_run.environments.qemu_control CONTAINER_NAME
+uv run python -m ale_run.environments.qemu_control CONTAINER_NAME \
+  --output ./vm-diagnostics \
+  --control-dir /path/to/exchange/control/RUN_TOKEN
+```
+
+`--control-dir` is optional. A VM started by older code has no supervisor shared
+channel; the diagnostic interface reports guest health as unknown and still
+collects Docker/QMP evidence. Existing runner processes must finish or restart
+before they use the new supervisor protocol. These changes do not modify the
+agent prompt or installed CLI version.
+
+## Optional host proxy for guest downloads
+
+The optional `qemu.network` field joins an existing Docker bridge. It defaults
+to the usual Docker network and does not set proxy variables inside the guest.
+To use the host's existing unauthenticated SOCKS5 listener at `127.0.0.1:7890`,
+run this from the repository root:
+
+```bash
+sudo python3 scripts/qemu_proxy.py start --mihomo /absolute/path/to/mihomo
+sudo python3 scripts/qemu_proxy.py status
+```
+
+The script reuses the mihomo executable in a separate systemd transient service.
+It creates `ale-qemu-egress` with the fixed bridge interface `br-ale-egress`,
+and redirects only that bridge's public IPv4 TCP traffic. A relay on the bridge
+gateway at port 17890 forwards it to the existing SOCKS5 listener. TLS/HTTP
+sniffing preserves domain names for routing without decrypting TLS. Host and
+private destinations bypass the relay; `maas.yicloud.com.cn` connects directly.
+Add `--direct-domain example.org` for additional direct domains. Repeated start
+keeps an already healthy service's configuration; stop it before changing it.
+
+In each desired snapshot's existing `qemu:` mapping, add:
+
+```yaml
+network: ale-qemu-egress
+```
+
+Each run joins the shared network. Docker removes its attachment when the
+container is deleted; no per-task gateway or custom lease database is needed.
+Retained VMs keep their network. Runner network addresses are included in
+`diagnostics/qemu.json`; the following commands inspect the shared gateway:
+
+```bash
+sudo journalctl -u ale-qemu-egress.service --no-pager -n 30
+sudo python3 scripts/qemu_proxy.py stop
+```
+
+Stop refuses to tear down a network with attached containers. The manager uses
+a host file lock, and deletes the network before stopping the relay so Docker
+can reject cleanup if a new container attached concurrently. Startup failure
+rolls back its network and rules when no container has attached. It never adopts
+an unrelated network of the same name or changes the host's original proxy.
+
+This intentionally small implementation requires Linux, systemd, iptables,
+Docker, `ss`, and a mihomo executable. It uses an IPv4-only Docker network; DNS
+and other UDP traffic remain direct. UDP/443 is rejected on this bridge to let
+compatible HTTPS clients fall back to TCP. It does not implement UDP proxying
+or guest IPv6 egress. Existing VM connections are not migrated. The service and
+rules are not installed for boot; run start again after reboot. Host-side runner
+image and base-disk downloads do not use this guest network.
+
 ## Initial limitations
 
 - GPU tasks are not supported. PCIe passthrough requires IOMMU/VFIO host setup,

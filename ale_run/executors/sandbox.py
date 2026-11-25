@@ -46,6 +46,12 @@ from ..base_interface import (
     RangeResult,
     SandboxHandle,
 )
+from ..environments.qemu_control import (
+    HeartbeatWatch,
+    inspect_health,
+    prepare_control,
+    read_control,
+)
 from ._secrets import (
     SECRET_GATHER_EXCLUDES,
     SECRETS_FILE,
@@ -120,6 +126,10 @@ class _TailState:
     pending_path: Path
 
 
+class _SolverCleanupFailed(RuntimeError):
+    """The guest explicitly reports that its solver process tree is not empty."""
+
+
 @dataclass
 class SandboxExecutor(BaseExecutor):
     """In-sandbox substrate. Code is shipped + run inside the cua VM via
@@ -129,6 +139,7 @@ class SandboxExecutor(BaseExecutor):
     _run_token: str = field(default_factory=lambda: uuid.uuid4().hex, init=False)
     _spawn_attempted: bool = field(default=False, init=False)
     _stop_task: asyncio.Task | None = field(default=None, init=False, repr=False)
+    _control_host: Path | None = field(default=None, init=False, repr=False)
     last_run_result: AgentRunResult | None = field(default=None, init=False)
     on_run_result: Callable[[AgentRunResult], None] | None = field(
         default=None, init=False, repr=False,
@@ -242,6 +253,9 @@ class SandboxExecutor(BaseExecutor):
             "timeout_s": float(timeout_s),
             "run_token": self._run_token,
         }
+        control = await prepare_control(sb, self._run_token)
+        if control is not None:
+            self._control_host, spec["control_guest_dir"] = control
         await sb.write_file(spec_path, json.dumps(spec, indent=2))
 
         # 4b. Write the transient secrets sidecar (read-once + self-deleted
@@ -319,7 +333,21 @@ class SandboxExecutor(BaseExecutor):
         marker_hit = False
         consecutive_process_misses = 0
         transport_unavailable_since: float | None = None
+        heartbeat_watch = HeartbeatWatch()
+        shared_result = None
         while time.monotonic() < deadline:
+            if self._control_host is not None:
+                done = read_control(self._control_host, "done.json", self._run_token)
+                if done is not None:
+                    shared_result = read_control(self._control_host, "result.json", self._run_token)
+                    if shared_result is not None:
+                        marker_hit = True
+                        break
+                if await heartbeat_watch.check(self._control_host, self._run_token):
+                    transport_unavailable_since = None
+                    consecutive_process_misses = 0
+                    await asyncio.sleep(_POLL_INTERVAL_S)
+                    continue
             try:
                 if await sb.exists(done_marker):
                     marker_hit = True
@@ -340,6 +368,18 @@ class SandboxExecutor(BaseExecutor):
             probe_finished = time.monotonic()
 
             if alive.returncode < 0:
+                if (sb.metadata or {}).get("provider") == "qemu":
+                    health = await inspect_health(sb)
+                    history = sb.metadata.setdefault("health_probe_history", [])
+                    history.append(health)
+                    del history[:-20]
+                    logger.warning("sandbox: independent VM probe: %s", health)
+                    if self._control_host is not None and await heartbeat_watch.check(
+                        self._control_host, self._run_token,
+                    ):
+                        transport_unavailable_since = None
+                        await asyncio.sleep(_POLL_INTERVAL_S)
+                        continue
                 if transport_unavailable_since is None:
                     transport_unavailable_since = probe_started
                 unavailable_s = probe_finished - transport_unavailable_since
@@ -427,8 +467,11 @@ class SandboxExecutor(BaseExecutor):
 
         # 9. Read result.json
         try:
-            raw = await sb.read_text(result_path)
-            out = json.loads(raw)
+            if shared_result is not None:
+                out = shared_result
+            else:
+                raw = await sb.read_text(result_path)
+                out = json.loads(raw)
         except (FileNotFoundError, RuntimeError, json.JSONDecodeError) as e:
             entry_tail = await self._tail_log(entry_log)
             return AgentRunResult(
@@ -591,6 +634,10 @@ class SandboxExecutor(BaseExecutor):
         """Poll for the launcher's pid file. Returns None on timeout."""
         deadline = time.monotonic() + _PID_WAIT_S
         while time.monotonic() < deadline:
+            if self._control_host is not None:
+                report = read_control(self._control_host, "heartbeat.json", self._run_token)
+                if report and type(report.get("supervisor_pid")) is int and report["supervisor_pid"] > 0:
+                    return report["supervisor_pid"]
             try:
                 raw = (await self.sandbox.read_text(pid_file)).strip()
                 if raw:
@@ -629,6 +676,46 @@ class SandboxExecutor(BaseExecutor):
             raise asyncio.CancelledError
 
     async def _stop_and_verify(self) -> None:
+        if self._control_host is None:
+            await self._stop_via_cua()
+            return
+
+        async def shared_stop():
+            target = self._control_host / "stop.request"
+            temporary = target.with_suffix(".tmp")
+            temporary.write_text(self._run_token)
+            temporary.replace(target)
+            while True:
+                report = read_control(self._control_host, "stopped.json", self._run_token)
+                if report is not None:
+                    if report.get("stopped") is not True:
+                        raise _SolverCleanupFailed(f"sandbox process cleanup failed: {report.get('error')}")
+                    return
+                await asyncio.sleep(_STOP_POLL_S)
+
+        tasks = {asyncio.create_task(shared_stop()), asyncio.create_task(self._stop_via_cua())}
+        try:
+            pending = tasks
+            failures = []
+            while pending:
+                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                for task in done:
+                    try:
+                        task.result()
+                    except _SolverCleanupFailed:
+                        raise
+                    except Exception as exc:  # noqa: BLE001
+                        failures.append(exc)
+                    else:
+                        return
+                if not pending:
+                    raise RuntimeError("both solver termination channels failed") from failures[-1]
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _stop_via_cua(self) -> None:
         sep = "/" if self.sandbox.is_linux else "\\"
         work_dir = self.work_dir.rstrip(sep)
         stop_path = f"{work_dir}{sep}_stop.request"
@@ -648,7 +735,7 @@ class SandboxExecutor(BaseExecutor):
                 await asyncio.sleep(_STOP_POLL_S)
                 continue
             if report.get("stopped") is not True:
-                raise RuntimeError(f"sandbox process cleanup failed: {report.get('error')}")
+                raise _SolverCleanupFailed(f"sandbox process cleanup failed: {report.get('error')}")
             return
 
     async def _tail_log(self, entry_log: str, max_bytes: int = 1500) -> str:

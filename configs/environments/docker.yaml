@@ -4,6 +4,11 @@
 #
 # Per-task cpus/memory are derived from the task card's GCE machine type by the
 # provider (c4-standard-4 -> 4 CPU / 15g, etc.); `resolution` sets the Xvfb size.
+# Local Linux runners also reserve ceil(cpus) logical CPUs with --cpuset-cpus.
+# Same-user runners coordinate allocation across processes and wait for free
+# CPUs. Running containers with a cpuset keep their reservation until stopped
+# or deleted, including release mode keep. Existing unpinned containers may
+# still compete for these CPUs; cpusets do not reserve CPU capacity from them.
 #
 # This profile intentionally stays a simple rootless-Docker path. Four tasks
 # require Docker inside the sandbox, and two more require Apptainer/Singularity;
