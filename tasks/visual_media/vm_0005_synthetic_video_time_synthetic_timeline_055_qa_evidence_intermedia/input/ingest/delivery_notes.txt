@@ -1,0 +1,1 @@
+Camera A ingest, take 055. Full and offline transcodes, review grabs, and notes arrived in one packet. Some files are incomplete or lower fidelity. Confirm stream properties before using any media for final measurements.

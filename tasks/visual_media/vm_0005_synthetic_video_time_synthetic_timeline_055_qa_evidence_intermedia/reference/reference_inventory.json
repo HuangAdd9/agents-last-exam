@@ -1,0 +1,22 @@
+[
+  {
+    "path": "ingest/roll_2/packet_17/VID_055A.mp4",
+    "decision": "selected",
+    "reason": "full-resolution complete stream; hash and decoded geometry verified"
+  },
+  {
+    "path": "ingest/offline/camA_055_proxy.mp4",
+    "decision": "rejected",
+    "reason": "proxy dimensions are 320x180"
+  },
+  {
+    "path": "ingest/offline/camA_055_head.mp4",
+    "decision": "rejected",
+    "reason": "partial duration; does not contain the complete take"
+  },
+  {
+    "path": "ingest/review/drop_07/Review Export 055.mp4",
+    "decision": "rejected",
+    "reason": "review transcode; bytes and exposure response differ from the selected camera delivery"
+  }
+]

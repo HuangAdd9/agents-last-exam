@@ -1,0 +1,5 @@
+asset	role	frames	fps	width	height	status
+roll_2/packet_17/VID_055A.mp4	camera_a	288	24	640	360	pending checksum
+offline/camA_055_proxy.mp4	proxy	288	24	320	180	review only
+offline/camA_055_head.mp4	proxy	72	24	640	360	partial
+review/drop_07/Review Export 055.mp4	review	288	24	640	360	approved

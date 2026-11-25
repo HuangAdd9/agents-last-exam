@@ -1,0 +1,68 @@
+{
+  "taskId": "visual_media/vm_0005_synthetic_video_time_synthetic_timeline_055_qa_evidence_intermedia",
+  "title": "Camera Ingest QC and Exposure Drift Repair",
+  "summary": "Triage a disordered camera delivery, recover its measured exposure timeline, and hand off synchronized evidence plus a corrected full-length video.",
+  "category": "visual_media",
+  "software": [
+    "FFmpeg / ffprobe",
+    "Python 3",
+    "OpenCV",
+    "NumPy",
+    "Pillow"
+  ],
+  "taskPrompt": "You are given a messy camera ingest for a restoration QC handoff. Work as the finishing technician: identify the usable full-resolution source among the delivered files, inspect its stream and pixels, and produce a small, self-contained QC package under `/media/user/data/agenthle/visual_media/vm_0005_synthetic_video_time_synthetic_timeline_055_qa_evidence_intermedia/base/output`.\n\nThe delivery is intentionally not arranged as a tutorial. There are incomplete proxies, review grabs, notes, stale checksums, and multiple differently encoded media files in nested folders under `/media/user/data/agenthle/visual_media/vm_0005_synthetic_video_time_synthetic_timeline_055_qa_evidence_intermedia/base/input`. Do not trust filenames, sidecars, or file order. Establish the actual stream properties and verify the bytes before processing.\n\nCreate five artifacts: `exposure_report.json`, `continuity_log.csv`, `frame_trace.csv`, `repair_recipe.json`, and `stabilized.mp4`. The report and continuity log must describe the chronological intervals, relative exposure behavior, timestamped measurements, and uninterrupted framing. The frame trace must contain one row per decoded frame of the selected source, including source and corrected measurements. The recipe must make the source selection, hash, measurement convention, correction method, preservation constraints, and output hash auditable. The stabilized video must be full length, 24 fps, same dimensions and frame count, H.264, with global exposure drift corrected while the neutral timecode strip and scene geometry remain intact. Do not crop, resize, add text, or replace the scene. Keep all artifacts in output and do not alter input.",
+  "inputFiles": [
+    {
+      "name": "camera ingest tree",
+      "format": "mixed media",
+      "path": "input/ingest/",
+      "description": "Nested camera media, incomplete transcodes, review grabs, and delivery notes."
+    }
+  ],
+  "evaluation": "The evaluator checks source triage, the candidate inventory, hashes and stream facts in repair_recipe.json, source and corrected measurements in frame_trace.csv, temporal and continuity agreement between the report and CSV, and a decoded full-length stabilized.mp4. It decodes every frame of the selected source and output to compare trace measurements, exposure correction, timecode preservation and scene content across the full image, and checks the H.264 video stream. Scores are component based with partial credit for valid measurements and media properties.",
+  "vm": {
+    "snapshot": "cpu-free-ubuntu",
+    "vcpus": 4,
+    "memory_gb": 8,
+    "timeout_s": 2400
+  },
+  "agentMustDo": [
+    "Triage the nested ingest and verify the full-resolution source.",
+    "Measure and report every source frame, not only selected stills.",
+    "Recover the temporal exposure behavior and synchronized continuity evidence.",
+    "Render a full-length exposure-corrected H.264 handoff without changing framing or overlays.",
+    "Save all five required artifacts under the absolute output path."
+  ],
+  "outputContracts": [
+    {
+      "name": "Exposure report",
+      "format": "JSON",
+      "path": "output/exposure_report.json",
+      "description": "Temporal exposure and evidence report."
+    },
+    {
+      "name": "Continuity log",
+      "format": "CSV",
+      "path": "output/continuity_log.csv",
+      "description": "Per-interval fixed-shot continuity log."
+    },
+    {
+      "name": "Frame trace",
+      "format": "CSV",
+      "path": "output/frame_trace.csv",
+      "description": "One measurement row for each decoded source frame."
+    },
+    {
+      "name": "Repair recipe",
+      "format": "JSON",
+      "path": "output/repair_recipe.json",
+      "description": "Auditable source selection, measurement and processing record."
+    },
+    {
+      "name": "Stabilized handoff",
+      "format": "MP4/H.264",
+      "path": "output/stabilized.mp4",
+      "description": "Full-length exposure-corrected video with original geometry and timecode."
+    }
+  ]
+}

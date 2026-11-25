@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "seed_id": "synthetic-timeline-055",
+  "revision": "v1",
+  "events": [
+    {"start_s": 0, "end_s": 2, "kind": "hold", "ev_start": 0, "ev_end": 0, "label": "BASE / stable"},
+    {"start_s": 2, "end_s": 4, "kind": "ramp", "ev_start": 0, "ev_end": 2, "label": "RAMP UP / brightening"},
+    {"start_s": 4, "end_s": 6, "kind": "hold", "ev_start": 2, "ev_end": 2, "label": "OVEREXPOSED / hold"},
+    {"start_s": 6, "end_s": 8, "kind": "ramp", "ev_start": 2, "ev_end": -1, "label": "RAMP DOWN / darkening"},
+    {"start_s": 8, "end_s": 10, "kind": "hold", "ev_start": -1, "ev_end": -1, "label": "UNDEREXPOSED / hold"},
+    {"start_s": 10, "end_s": 12, "kind": "ramp", "ev_start": -1, "ev_end": 0, "label": "RETURN / baseline"}
+  ]
+}

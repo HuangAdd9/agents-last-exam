@@ -1,0 +1,16 @@
+{
+  "checkpoints": [
+    {"time_s": 0.5, "mean_rgb": 97.169, "high_clip_fraction": 0.0, "low_clip_fraction": 0.0028},
+    {"time_s": 1.5, "mean_rgb": 97.168, "high_clip_fraction": 0.0, "low_clip_fraction": 0.0028},
+    {"time_s": 2.5, "mean_rgb": 130.501, "high_clip_fraction": 0.0, "low_clip_fraction": 0.0028},
+    {"time_s": 3.5, "mean_rgb": 174.508, "high_clip_fraction": 0.34, "low_clip_fraction": 0.0028},
+    {"time_s": 4.5, "mean_rgb": 190.827, "high_clip_fraction": 0.58, "low_clip_fraction": 0.0032},
+    {"time_s": 5.5, "mean_rgb": 190.808, "high_clip_fraction": 0.58, "low_clip_fraction": 0.0032},
+    {"time_s": 6.5, "mean_rgb": 164.707, "high_clip_fraction": 0.29, "low_clip_fraction": 0.0031},
+    {"time_s": 7.5, "mean_rgb": 81.570, "high_clip_fraction": 0.0, "low_clip_fraction": 0.0111},
+    {"time_s": 8.5, "mean_rgb": 49.430, "high_clip_fraction": 0.0, "low_clip_fraction": 0.0111},
+    {"time_s": 9.5, "mean_rgb": 49.428, "high_clip_fraction": 0.0, "low_clip_fraction": 0.0111},
+    {"time_s": 10.5, "mean_rgb": 58.102, "high_clip_fraction": 0.0, "low_clip_fraction": 0.006},
+    {"time_s": 11.5, "mean_rgb": 81.551, "high_clip_fraction": 0.0, "low_clip_fraction": 0.003}
+  ]
+}
