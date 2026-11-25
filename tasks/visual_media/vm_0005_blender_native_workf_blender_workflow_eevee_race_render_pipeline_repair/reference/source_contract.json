@@ -1,0 +1,237 @@
+{
+  "signature": {
+    "objects": {
+      "Area": "66555dcb44a33d586901ca9805f75ceca4b349177ca44623b9e90ee13e81da2f",
+      "Area.001": "f81035785414295439f176d1846876677401b692b33105c836923a731b5816de",
+      "Area.002": "da820f9157b21b1188c862122475e717d517e8579e2de7274415cb091647dca9",
+      "Area.003": "6073d2043adfa0395be42d5126eab038a4959e5f4e4752d3f0dfdf5bb7fce84f",
+      "Area.004": "0de00deb55ec265128d611429951fbe55ff91fc5b4d5198e5281ac509d1edf26",
+      "Area.005": "272e04e851f380c64a2c35ed88e66c11c2c0f10b32ea4c9a4de9cbae23a02afe",
+      "Area.007": "bb69c9ca053b28dbcf7f5bb156be8898fb66bed24cec7711c7f6885e7910da74",
+      "Camera": "91467532c0d1f713af31962e861883012dfbcd9f4efab55014e1181f387845db",
+      "Cube.000": "77aebb05e23821699a8b67f4c5a833a0b5610d5057db22aced042046f8bcc16e",
+      "Cube.001": "5452cfc1283d224be26bafc4aff9c8eddf3511cd29bcbb1ba43ffd44f4d97b11",
+      "Cube.002": "e0c2dbcd0d498f13a4f402afb5cfb75e6f66e7dccba0f51002f45c8be8e6d009",
+      "Cube.002_Cube.011": "ed13b20bc3e19403826995465ff3c8e62d12c9af9c58ade717de186c71f6a0f0",
+      "Cube.009": "80501478135f0cbfa08fc67b5a9abce037a95a7542663dc8b7c0f5dd0e9a371b",
+      "Cube.011": "58f1da5707da4ec026c16ed7e8b4c7e83cea15f8ec11d3ee3eed173107aa025f",
+      "Cube.012": "94d8c9e7736c6990c92a3e23fbf3e9021285d7d09ea0706690a44fca3b4398e0",
+      "Cube.013": "39b82c61f7d551bf06b741543c70b9e4ea12664323576ee18d6efac557850811",
+      "Cube.014": "9fddd5578e17e2b1a234038e5ef9808379947afdf336b2accaadb7aaa088c278",
+      "Cube.015": "e92500f25f8b4645be4f596deb5b1b2d8f25b1426af240e9572e9eec997c8248",
+      "Cube.016": "ced0e64c5b0b6d5c40c4c990438dffe6d07e88a6e96a18073ecd4785b6be8233",
+      "Cube.017": "af98ba65f7b71fc89759d41b56ddd1bd037a0704118399d26cea920684eae3f1",
+      "Cube.018": "ce28d811c112ad639312e5af38518444bab0a00965de7580d97d2c4bc03eec80",
+      "Cube.019": "865cdfe6c9ccf41c082f85274e6bfd260f7b57721bfca8ca25527479347a50d5",
+      "Cube.020": "895ed1ae6c3120567629afce967f6bb2bc088ff0a799d1dc197c7812a18d7e17",
+      "Cube.021": "9b4cc30ddf6f10ad2f2ad7d65e7125cb63dfe6f1cc7c9afba0b7fb1df614863d",
+      "Cube.022": "b9215b53bee19a8967eb0e06404595b9bba38d27e85a91ff2ef86e7e04335757",
+      "Cube.023": "6fd25053ead898d70e41091155830580d5615b60b81172d9bb3d26ce3c843ad8",
+      "Cube.025": "deb8d5fabf4201f028285507f9a8eea7f19c8d60cd5e71fc26dd20779cce5d97",
+      "Cube.027": "85431e29cc024bc5d21f92316059811e6646e8815cb10e65b4fcaae85ea015cc",
+      "Cube.028": "82ec917e70ae8ca247c4850ac322f2bcbd944f7222ca294e691bb6810a0f7053",
+      "Cube.030": "f13f82ee14c0a0e2c13efbf121e8f214c35f7bc871e9365fd3ec2fba41743a5a",
+      "Cylinder.000": "28a74cae318a0cee1b7569cdbfb76fbffc5752d61c6e4520b2903420d5ee3e5d",
+      "Cylinder.001": "d4511c0fb2679982205edecb3b8970ad8f71197d0830215f41fcf77ea2840232",
+      "Cylinder.002": "0ea9c4d73dd2d41702790eb1e98d69b4d8f43d21532143dcfad4e84495c462a9",
+      "Cylinder.003": "277b90f604d297332a70e24d84c784cc9c7033d0bf2014b28719c78cba716629",
+      "Cylinder.004": "e240479a383fdca26368547cd497c42342a9df248454009a30664b9142a9f560",
+      "Cylinder.005": "d7d625d80afea87e2a631c5cdf6cf3571b553edb6ee852971c81a0df49dd09ed",
+      "Cylinder.006": "b97db4ad9cfbcbfd0d405e7316e7fdcef541a6e6a10a8be78218ef794ce64da7",
+      "Cylinder.007": "4f4a88a16ae680d3be737aa493205f45b3d6b2fa78fdf81fbf84485ad54b74c7",
+      "Lamp": "94af663a5556310e298b3adbb646964f6c3a98ae692c8fed406c90216737deeb",
+      "Lamp.001": "c77e2fcde27ba91494f2d60f95f5e4ad72a95582bde3276fe223d8ba7e8fbef5",
+      "Light Probe": "f4404eba87fbbfc2bc53cf895c81a53b9775762532ea6decedb450928cf4b12e",
+      "Plane.001": "068129d0d166a896f47888b77be5c7e6d89f91356816280cfd0c0c433f3f6e93",
+      "Point": "8d26c628bc3a76fab1cb0be22c252693f3c689415cf039ccfc1f4c03cf3b1f8e",
+      "Point.002": "2476ed22a5c714e4ffaa5612402c7581a2d9b121560fd92c3160619d7159a65e",
+      "Point.003": "4e67a6f05123548712e2ea5deaa5dd10e0c6c3c4e4e89f0c152d95caeb504bf0",
+      "Ship Geometry": "3228687d05eeba06750723364a4cab1a636178842d71c946df9f3618f604f63f",
+      "Text": "16485f48c5626ede8873a57c0258c9fc55003749ffd716877f27d522f62f8017",
+      "Text.001": "7aea3a34d4656478da4f845a1f9cc3821c1f3d19da904fb8e575f787c50df2f7",
+      "Text.003": "334d3fe4229a35c26bd99de868df6a70aad756da3828a446cff5dd89562bb82c",
+      "Text.004": "7ac629f31eeb08b5ab2abc013eb8fd0dea95cb359e4102f616e687ef5f77a022",
+      "Text.005": "84ca72b7fead91412e11c9997059d7f7989c8e1af8aef62bf61ad21854f01438",
+      "Text.006": "30006774d02c45ab9a6caa21197a859d5e40a51d40a425ad3cb42755b1f95414",
+      "Text.006_Mesh.003": "800eed7068869f668bc52156b83d8d3db33cf8262e53a56a988a570abc0316e3",
+      "Text.007": "007675eefb77282b97b1fa812df9ea3aa21f248edb48a78e16162a070b770849",
+      "Text.008": "2eb3146c2b5e997310c32669f45dc6319a73668dee3910f065767e84b19b3bbc",
+      "Text.009": "0f4e2fd22e9ac846fc58aff77087ec74155586b6ec75c9e7ae6a4c41d7459760",
+      "Text.010": "4e3bda967cf7e6890689f551675daf4efbdda32653ef8e5d55f202a98ad18608"
+    },
+    "meshes": {
+      "Cube.000": "f335d3d661ded64e0d39627cb44364d03df8764d92710a53e2b9c0fc313fdb94",
+      "Cube.001": "eafb18b51d0711b78324051e9b0e2ffd34d6b0fdad00c621cc6c3a3be77e44f8",
+      "Cube.002_Cube.011": "c09da7ed90c13c9e3a6cebd08e4fc92bebacca2be9db4b051dc360d81633fb84",
+      "Cube.013": "69bab67c67718df1636120e3e6793309850d65eb89dc9d421f173fe03e14e359",
+      "Cube.026": "69bab67c67718df1636120e3e6793309850d65eb89dc9d421f173fe03e14e359",
+      "Cube.031": "902a8dfc0093a2f13182a38b4d85708f9099452327d6c8719e8895f6106eb3fa",
+      "Cube.034": "e1d75a519c3c514d30aa487bc39aa03b16d559b12218c0bf6210ff890d8e2da7",
+      "Cube.036": "995e7c302332f38835bd05280e7336edecb30bdbf7fd7342164bb32b0d5329b4",
+      "Cube.037": "e602f7003b86ee7878f9aa868e135e61a059b8a487c97a1697ba7ff402133570",
+      "Cube.038": "de4ce286248f9af8546ff675d8fee3b78032c3b8be85c4ed28beb716eefec8a4",
+      "Cube.039": "6882f321ef99b623eb7fdc0e2dfe08a8fde95949d2fc155d6d1dcb39a855dae1",
+      "Cube.041": "75bf258c63c81cf936904e117192d855d79ab4a26bd0ef4687bc5da9b917633c",
+      "Cube.043": "1add0fdeef1976869d423be23d063b052191ab07aa0b24cbeaf05d1e665945f2",
+      "Cube.045": "5d5c2fbb288968b728077c3c5ca993397d84320a9e8c5f86d7527389e8bd0e55",
+      "Cube.046": "a241fbc046ff8d410d299db936ee8c6d9500e3cc35c123e4433b95f5b11afcfd",
+      "Cube.047": "4bda5001e3e2b308ca476f193c7231eaed7bbf424770e7f0e2bcd01c638665c8",
+      "Cube.048": "13c1a1734cce67e54ea28fabd6458b72500dd5b57de7e0c533abecf0c128f635",
+      "Cube.049": "ebab3a2bb5b2afa4b12cf17408c3c9330d0d465993d19e0031f56e9fb5c9703e",
+      "Cube.050": "c51b7767f819c0c36c78067fe05c5fd5518fa2e0e0cd87c1aa40ed8f97aa0b64",
+      "Cube.052": "2755b003960e1a9c1ad92e3578713e078a67438f4065a0529a7c3f19608d1fa2",
+      "Cube.059": "537f20bf94640b185be79cab3b8e8eb04559687c84c7db8531560dfc02aa57cd",
+      "Cube.061": "e7e054ecd2b07cc7e57aed8daa9f7ac283b1ad81c8b5a69a642546aa019746d0",
+      "Cylinder.001": "2f1dbdaf006fdb257f37fb418c9b5fba95078ea73f576f530b5fbaabaff19c15",
+      "Cylinder.002": "20b19f27ecd15c835c136487ed97452ffcd32b3a7a97e5debf13096581d422be",
+      "Cylinder.003": "20b19f27ecd15c835c136487ed97452ffcd32b3a7a97e5debf13096581d422be",
+      "Cylinder.004": "2f1dbdaf006fdb257f37fb418c9b5fba95078ea73f576f530b5fbaabaff19c15",
+      "Cylinder.005": "2f1dbdaf006fdb257f37fb418c9b5fba95078ea73f576f530b5fbaabaff19c15",
+      "Cylinder.007": "20b19f27ecd15c835c136487ed97452ffcd32b3a7a97e5debf13096581d422be",
+      "Cylinder.008": "2f1dbdaf006fdb257f37fb418c9b5fba95078ea73f576f530b5fbaabaff19c15",
+      "Cylinder.009": "20b19f27ecd15c835c136487ed97452ffcd32b3a7a97e5debf13096581d422be",
+      "Mesh.000": "8ac08106b5b9d9fa05197df024ac7073dbd90d54f3c1eb7a6fa9919111da8d11",
+      "Mesh.001": "c5d0e0d1c8848eb554b2775d7ecd4fbab4d1c48c66607a810f47b17756fcbb33",
+      "Mesh.008": "863dd3fdfdf56f88518dc71ec91655985ac28ff3e5b5e3fb5e090bab62fde266",
+      "Mesh.009": "29e068f8599d6c3b7d96a2d493f7471a36e1b99d1986e6c145d451b1a4ace0c8",
+      "Mesh.010": "d360719921b23b16829c40f8bd42f210a7418be5312362ffd8f8195c7d564161",
+      "Mesh.011": "7e5a745924ca038747854d55e193cdd1bcc4a988d873c859776ddb2f2aaf4a8e",
+      "Mesh.012": "32c77ee9628896275dbd8248cfb502527fb8cf7c2a8226b5c728f7b0129deccb",
+      "Mesh.013": "c5d0e0d1c8848eb554b2775d7ecd4fbab4d1c48c66607a810f47b17756fcbb33",
+      "Mesh.014": "8ac08106b5b9d9fa05197df024ac7073dbd90d54f3c1eb7a6fa9919111da8d11",
+      "Mesh.015": "863dd3fdfdf56f88518dc71ec91655985ac28ff3e5b5e3fb5e090bab62fde266",
+      "Plane.004": "fa7265f66353fdb5d34d2329e00e71d59e8cb5ef0615394c8350680ec2064bbf",
+      "Text.006_Mesh.003": "fd3ac05c235c44b60da74fa688de977036d3248f1880dc27d54e896d55118368"
+    },
+    "materials": {
+      "black": "f9f2a8f51e904bc496d72b762730dca868df744cda66cf32ba53e1f8f2c5993d",
+      "black.001": "7075eb02a39ebd4cba81ad222de910a217b8b672f245be427a9d460418086e93",
+      "black.002": "37dad3e33260c4f1e2a04ba3f9b4dfa3cc99ca14ffa021a8fb4a1349425f56c1",
+      "black.004": "cbbb95cd7d72913ec349030cb658a90460e11d8996fc273917210d91c77bcc14",
+      "Engine": "1015d758e718ec69683c3597e8c7b794ed7bb2ba2cf3dd0ab838fb249b956910",
+      "Material": "2457da037d0c1b96b46341368bdd745a076d4beff17ccd0add500d8f3d57122c",
+      "Material.002": "54bb7c40bedeb7e4f508e0ae861358209a77ba80461fb838e0df69e23ff7a3f7",
+      "Material.003": "ca1a5be13dc63af252cf7a4494b3c3c9773b8eadc3e66430400535c5f3de6c9c",
+      "Material.004": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "Material.005": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "Material.006": "ca1a5be13dc63af252cf7a4494b3c3c9773b8eadc3e66430400535c5f3de6c9c",
+      "Material.007": "916a0e7db7feeeab8f9d2c9e10780130285c20a729a020319bd75248f56eb84a",
+      "Material.008": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "Material.018": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "Material.019": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "Material.020": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "Material.024": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "Material.025": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "Material.026": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "Material.027": "dc5aad2dc1e882d01ce3c5bfad87221481ae23e8b4a3e2a3afa52e808561e53e",
+      "Material.028": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "red": "c4a06a701da2dacac12ae77491909d30a8e9fe3bb0273904625a65d0d185ff1a",
+      "vetro": "ae08851ed915a5521e2db46ab234f102e7936863f06a2e6aa3b84bf22d2a3c12"
+    },
+    "actions": {
+      "AreaAction.001": "0415ea18485a55a4f0481bec4db215bd0705327996e33c0db2d26f00c557c3ed",
+      "CameraAction": "427407cb1b8c0e18018494cddef16ca4c44345269c1b9dddec1b56f7492e188f"
+    },
+    "images": {
+      "00-1.jpg": "afca70362aa7b99b1a9946e017e969cbcf677a09177fd2f82ca646774c3e079e",
+      "15dbf56a2a3b24d1767686fabcb43e7e.jpg": "f2238c71040ed42a78fae9857c7fa0e62fa36d39d2e6e33a7e946aacf01652ef",
+      "15dbf56a2a3b24d1767686fabcb43e7e.jpg.001": "f2238c71040ed42a78fae9857c7fa0e62fa36d39d2e6e33a7e946aacf01652ef",
+      "fx3_Panels_Bump2.jpg": "b002cb1fe6178c59c7890ae03bee86345b371bb18ba1907e79a75b0916238f52",
+      "post-4216-1316384522.jpg": "8796d490544e06e5cd4b4bf7cb77d0cb0b2610926e2390b5722e0268da21dd27"
+    },
+    "lights": {
+      "Area.001": "9da6750a11d8c5b170b27b7f01cb42a2ed4af77be85ae8d6d4b36db8ab39028c",
+      "Area.002": "588de38e731566df01bcb302fb23b681c44a5df1f488606fadc9c86662d98571",
+      "Area.003": "1b7209985261b23087cfaf6d0cd65fd4680c5423764831db6d58a8731e06d141",
+      "Area.004": "5a6d42c9994998165e23f7f95ff9f6e6e37f4daaf309b0865480c22cf8211f1f",
+      "Area.005": "346e093a7e919738e62d749cbae46287d7d83781697e0a87e9d366feea1e1034",
+      "Area.007": "360034a48bcdf211cb87702b64a52782d8c74a4292f6feacd29a96c1d6a14eb0",
+      "Area.009": "f6a702ee8b7745786e41c11071b96f901a43f637d94b0ba9479b388cc1ebeed2",
+      "Lamp": "c9ca769284c65c0c96d608ca42ededbcaa0005c435472e95df28034304c08877",
+      "Lamp.001": "f137ff23d9ee2b86e8783a1f6a3687bb6493b0341fde961385ebe06b9d2bea1d",
+      "Point": "d7ad2c913252b3b465a8bd886969d249e93a5cabdead4bf21e348045fd800f74",
+      "Point.002": "db520bdf609dd49a1e07b3c27b6b4d0a92da54e134439b2f88a4d2b3e88c5ea7",
+      "Point.003": "1462bed334d30042db8715bc2dcb3c5f29a5b3b9addfc12f75f3229aa10724aa"
+    },
+    "cameras": {
+      "Camera": "ee6d18493fa50359b70b9a94dd82b5e5a4e3251da412435dde5223eb9feb3fe5"
+    },
+    "worlds": {
+      "World.001": "3604e0c38bf4b516d10786f90e11eab792742857f5b4f2222dadbda6313350b3"
+    },
+    "layer_collections": {
+      "All": "10f3597c88797d87f7d332a56ca98dd6876e83e1c15cad0cbddbdf0ad96a57d4",
+      "Ship": "8e9901905ac03f44e0b62cdbe763200e0e2590e3adf8bcb4fc74be91b421129c",
+      "Set": "63cc13d20f2f3911f976335f10bc9198033a315a2151c1c76df71680175dbb9f"
+    },
+    "timeline": "5f24e0ecf63ccd45c8c75df81790d02c034b6c120b19b653453cbbfac7bdea62"
+  },
+  "saved_settings": {
+    "version": "4.0.2",
+    "engine": "BLENDER_EEVEE",
+    "frame": 1,
+    "resolution": [
+      480,
+      270,
+      100
+    ],
+    "samples": 64,
+    "motion_blur": true,
+    "motion_blur_shutter": 1.0,
+    "motion_blur_parameters": {
+      "motion_blur_position": "CENTER",
+      "motion_blur_depth_scale": 100.0,
+      "motion_blur_max": 32,
+      "motion_blur_steps": 1
+    },
+    "view_transform": "Standard",
+    "look": "None",
+    "exposure": 0.0,
+    "gamma": 1.0,
+    "display": "sRGB",
+    "compositing": true,
+    "sequencer": false,
+    "transparent_film": true,
+    "pixel_aspect": [
+      1.0,
+      1.0
+    ],
+    "layers": {
+      "All": [
+        true,
+        true,
+        true
+      ],
+      "Ship": [
+        true,
+        true,
+        true
+      ],
+      "Set": [
+        true,
+        true,
+        true
+      ]
+    }
+  },
+  "surface_targets": {
+    "Cube.034": [
+      "UVMap"
+    ],
+    "Cube.052": [
+      "UVMap"
+    ],
+    "Cube.047": [
+      "UVMap"
+    ]
+  },
+  "material_targets": [
+    "Engine",
+    "Material.007",
+    "Material.027",
+    "black",
+    "black.002",
+    "black.004",
+    "red"
+  ]
+}

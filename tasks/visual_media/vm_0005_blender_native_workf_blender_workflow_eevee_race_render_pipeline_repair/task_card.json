@@ -1,0 +1,25 @@
+{
+  "taskId": "visual_media/vm_0005_blender_native_workf_blender_workflow_eevee_race_render_pipeline_repair",
+  "title": "Recover an interrupted EEVEE finishing handoff",
+  "summary": "Recover shared shader definitions, corner-domain surfaces, media dependencies and a linked nonlinear finishing pipeline from a fragmented Blender handoff.",
+  "category": "visual_media",
+  "software": [
+    "Blender 4.0.2 (preinstalled; command blender)"
+  ],
+  "taskPrompt": "Finish the Race Spaceship delivery to its acceptance register.\n\nInput: /media/user/data/agenthle/visual_media/vm_0005_blender_native_workf_blender_workflow_eevee_race_render_pipeline_repair/base/input\nOutput: /media/user/data/agenthle/visual_media/vm_0005_blender_native_workf_blender_workflow_eevee_race_render_pipeline_repair/base/output\n\nUse Blender 4.0.2. Write the registered deliverables directly in output. Leave input unchanged. No embedded execution, baked compositor inputs or post-render processing.\n",
+  "inputFiles": [
+    {
+      "name": "Shot handoff",
+      "format": "Blender projects, JPEG, PNG and acceptance registers",
+      "path": "input",
+      "description": "Interrupted native handoff, media fragments and measured acceptance data."
+    }
+  ],
+  "evaluation": "Partial credit: scene/media preservation 5%; recovered UV corners and polygon material assignments 10%; recovered original shader definitions 5%; saved render/color/layer settings 5%; portable paths 5%; linked native library/control interface 10%; fresh relocated render 15%; fresh changed-control/exposure/light render 25%; delivered PNG formats/pixels 10%; delivered multilayer FLOAT EXR 10%. Shader definitions are measured individually on retained material identities; node names and layout are irrelevant. Surface recovery is measured on retained base meshes, allowing 0.0001 UV units for equivalent native transfer; duplicate slots assigning the same material are equivalent. Original scene passes and finished linear channels each contribute half of the EXR value score. Live scores measure PNGs 30%, EXR 35%, actual Composite 35%; finishing and utility are also measured in ship, fractional-coverage and occlusion regions. Embedded execution is disabled. Native groups and equivalent graphs are accepted. Active exports must depend on live Render Layers. Numerical tolerances allow repeat-render and calibration rounding error. Missing components receive their own partial credit; screenshots and assertions are not scoring evidence.",
+  "vm": {
+    "snapshot": "visual-media",
+    "vcpus": 8,
+    "memory_gb": 16,
+    "timeout_s": 7200
+  }
+}
