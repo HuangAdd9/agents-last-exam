@@ -1,0 +1,26 @@
+{
+  "taskId": "physical_sciences/phys_paper_a74bb1db81dcddab_structure_and_evolution_of_northern_juan_de_fuca",
+  "title": "Northern Juan de Fuca-style Layered P-Wave Refraction Inversion",
+  "summary": "Infer a three-layer oceanic P-wave velocity/thickness model from active-source travel-time picks, then validate predictions and physical invariants on hidden offsets.",
+  "category": "physical_sciences",
+  "software": ["Python", "NumPy"],
+  "taskPrompt": "Read input/problem_spec.md and input/picks.csv. Perform the weighted straight-line branch fits and layered refraction inversion described there. Produce model.json, predictions.csv, inversion_trace.csv, and diagnostics.json under output/. Units are km, km/s, and s; no network is available.",
+  "agentMustDo": [
+    "Fit each labelled travel-time branch with uncertainty weights and convert slopes/intercepts to layer velocities and thicknesses.",
+    "Recompute visible predictions and residuals using the layered ray formulas.",
+    "Record a non-increasing multi-iteration inversion trace and report RMS, reduced chi-square, and invariant status.",
+    "Match the exact schemas and keep all deliverables inside output/."
+  ],
+  "inputFiles": [
+    {"name": "problem_spec.md", "format": "Markdown", "path": "input/problem_spec.md", "description": "Equations, units, workflow, and output contract."},
+    {"name": "picks.csv", "format": "CSV", "path": "input/picks.csv", "description": "Benchmark-authored labelled active-source travel-time picks."}
+  ],
+  "referenceFiles": [
+    {"name": "reference.json", "format": "JSON", "path": "reference/reference.json", "description": "Evaluator-only oracle model and hidden-prediction targets."},
+    {"name": "hidden_picks.csv", "format": "CSV", "path": "reference/hidden_picks.csv", "description": "Evaluator-only holdout offsets and times."}
+  ],
+  "evaluation": "Hard schema/path gates return 0. Weighted score: model recovery 0.35, visible predictions 0.20, independently recomputed hidden holdout predictions 0.25, iterative trace 0.10, invariant/diagnostics 0.10. Hidden prediction error above 10 ms caps the score below 0.60.",
+  "vm": {"machineType": "c4-standard-4", "snapshot": "physical-numerics", "timeout": 5400, "vcpus": 4, "memory_gb": 8, "disk_gb": 20},
+  "taxonomy": {"domain_id": "2", "domain_code": "physical_sciences", "subdomain_id": "2.1", "subdomain_code": "earth_environmental_sciences", "subdomain_name": "Earth & Environmental Sciences"},
+  "requiredSystemPackages": []
+}

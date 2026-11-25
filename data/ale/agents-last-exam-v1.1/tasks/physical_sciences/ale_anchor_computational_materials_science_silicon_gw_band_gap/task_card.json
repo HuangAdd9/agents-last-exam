@@ -1,0 +1,75 @@
+{
+  "taskId": "physical_sciences/ale_anchor_computational_materials_science_silicon_gw_band_gap",
+  "title": "Silicon GW Band Gap: Reduced-Order Reproducibility Audit",
+  "summary": "Implement a pinned two-band quasiparticle model on the visible silicon primitive cell, produce auditable mean-field and GW artifacts, and generalize the solver to a hidden valley/grid case.",
+  "category": "physical_sciences",
+  "software": [
+    "Python 3.10.12",
+    "NumPy 2.2.6"
+  ],
+  "taskPrompt": "Read base/input/problem_spec.md and base/input/model_spec.json. Use base/software/python with no network. Parse the silicon POSCAR and UPF, evaluate the specified mean-field and GW surrogate on the exact k grid, create the intermediate and final JSON/CSV diagnostics, and include a generic executable solve.py. Write exactly base/output/mean_field.json, base/output/quasiparticle.json, base/output/band_path.csv, and base/output/diagnostics.json plus solve.py; the evaluator runs solve.py on an evaluator-only case with a different grid and valley.",
+  "agentMustDo": [
+    "Validate the two-atom diamond primitive structure",
+    "Compute the complete half-open k-grid and independent GW correction",
+    "Create intermediate mean_field.json before quasiparticle.json",
+    "Provide a generic solve.py accepting CASE.json RESULT.json",
+    "Report units and scientific invariants"
+  ],
+  "inputFiles": [
+    {
+      "name": "Silicon primitive structure",
+      "format": "VASP POSCAR",
+      "path": "input/silicon/silicon.vasp"
+    },
+    {
+      "name": "Silicon pseudopotential",
+      "format": "UPF 2.0.1",
+      "path": "input/silicon/Si.UPF"
+    },
+    {
+      "name": "Synthetic model specification",
+      "format": "JSON + Markdown",
+      "path": "input/model_spec.json"
+    },
+    {
+      "name": "Workflow specification",
+      "format": "Markdown",
+      "path": "input/problem_spec.md"
+    }
+  ],
+  "referenceFiles": [
+    {
+      "name": "Evaluator-only hidden model",
+      "format": "JSON",
+      "path": "reference/hidden_case.json"
+    },
+    {
+      "name": "Oracle reference artifacts",
+      "format": "JSON",
+      "path": "reference/hidden_reference.json"
+    }
+  ],
+  "evaluation": "Hard gates reject missing/extra files, malformed JSON/CSV, wrong units, non-executable solve.py, invalid coordinates, or writes outside output. Score: 0.20 visible mean-field extrema/gap, 0.20 visible QP gap/opening and topology, 0.15 band-path shape, 0.10 diagnostics/invariants, 0.35 hidden generic solve.py execution on a different grid and valley. Numeric tolerances are 1e-8 eV for scalar references and 2e-6 eV RMSE for path values. Empty/malformed submissions return [0.0].",
+  "vm": {
+    "machineType": "c4-standard-4",
+    "snapshot": "cpu-free-ubuntu",
+    "vcpus": 4,
+    "memory_gb": 8,
+    "disk_gb": 20,
+    "timeout_s": 3600
+  },
+  "requiredSystemPackages": [],
+  "runtime": {
+    "python": "/usr/bin/python3",
+    "python_version": "3.10.12",
+    "numpy": "2.2.6",
+    "network": false,
+    "expected_runtime_s": 2,
+    "memory_limit_gb": 1
+  },
+  "taxonomy": {
+    "domain_code": "physical_sciences",
+    "subdomain_code": "chemistry_materials",
+    "subdomain_name": "Chemistry & Materials Computation"
+  }
+}

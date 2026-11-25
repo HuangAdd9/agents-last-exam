@@ -1,0 +1,63 @@
+{
+  "taskId": "physical_sciences/ale_anchor_egt710_table1_smiles_extraction_egt710_table1_smiles_extraction",
+  "title": "EGT710 Table 1 molecular reconstruction and assay transformation",
+  "summary": "Reconstruct nine complete medicinal-chemistry structures from a paper table, convert assay units, derive pIC50 and molecular bookkeeping, and implement a transformation that generalizes to a held-out molecule.",
+  "category": "physical_sciences",
+  "software": [
+    "Python 3.10.12 (standard library only)"
+  ],
+  "taskPrompt": "The full task prompt is provided by main.py; input/README.md identifies the relevant paper table and conventions.",
+  "agentMustDo": [
+    "Inspect input/source_paper.pdf and reconstruct compounds 1 through 9 from Table 1",
+    "Write output/submission.csv with the exact schema and converted assay values",
+    "Write output/audit.json with molecule-level bookkeeping invariants",
+    "Write output/transform.py that handles an evaluator-supplied held-out record"
+  ],
+  "inputFiles": [
+    {
+      "name": "EGT710 source paper",
+      "format": ".pdf",
+      "path": "input/source_paper.pdf"
+    },
+    {
+      "name": "Offline source guide",
+      "format": ".md",
+      "path": "input/README.md"
+    }
+  ],
+  "referenceFiles": [
+    {
+      "name": "Evaluator reference table",
+      "format": ".csv",
+      "path": "reference/reference.csv"
+    },
+    {
+      "name": "Evaluator molecular audit",
+      "format": ".json",
+      "path": "reference/reference_audit.json"
+    },
+    {
+      "name": "Held-out transform case",
+      "format": ".json",
+      "path": "reference/hidden_transform_case.json"
+    }
+  ],
+  "evaluation": "Hard gates require all three output files, an exact nine-row CSV schema, IDs 1..9, bounded file sizes, and parseable values. Weighted score: schema 0.15, source canonical-SMILES identity 0.35, IC50/solubility unit conversion 0.25, pIC50 0.10, molecular audit 0.10, and held-out transform 0.05. The pass threshold is 0.99; per-row mistakes receive partial credit but do not pass.",
+  "vm": {
+    "machineType": "c4-standard-2",
+    "snapshot": "cpu-free-ubuntu",
+    "vcpus": 2,
+    "memory_gb": 4,
+    "disk_gb": 10,
+    "timeout_s": 3600,
+    "network": {
+      "mode": "off"
+    }
+  },
+  "requiredSystemPackages": [],
+  "taxonomy": {
+    "domain_code": "physical_sciences",
+    "subdomain_code": "chemistry_materials",
+    "task_family": "paper_table_to_structured_extraction"
+  }
+}

@@ -1,0 +1,74 @@
+--------------------------------------------------------------------------
+WARNING: Linux kernel CMA support was requested via the
+btl_vader_single_copy_mechanism MCA variable, but CMA support is
+not available due to restrictive ptrace settings.
+
+The vader shared memory BTL will fall back on another single-copy
+mechanism if one is available. This may result in lower performance.
+
+  Local host: df871e82a8ce
+--------------------------------------------------------------------------
+
+     Program PW2BGW v.6.7MaX starts on 21Sep2026 at  0: 1:58 
+
+     This program is part of the open-source Quantum ESPRESSO suite
+     for quantum simulation of materials; please cite
+         "P. Giannozzi et al., J. Phys.:Condens. Matter 21 395502 (2009);
+         "P. Giannozzi et al., J. Phys.:Condens. Matter 29 465901 (2017);
+          URL http://www.quantum-espresso.org", 
+     in publications or presentations arising from this work. More details at
+     http://www.quantum-espresso.org/quote
+
+     Parallel version (MPI & OpenMP), running on      16 processor cores
+     Number of MPI processes:                16
+     Threads/MPI process:                     1
+
+     MPI processes distributed on     1 nodes
+     R & G space division:  proc/nbgrp/npool/nimage =      16
+
+     Reading xml data from directory:
+
+     ./silicon.save/
+
+     IMPORTANT: XC functional enforced from input :
+     Exchange-correlation= PZ
+                           (   1   1   0   0   0   0   0)
+     Any further DFT definition will be discarded
+     Please, verify this is what you really want
+
+
+     Parallelization info
+     --------------------
+     sticks:   dense  smooth     PW     G-vecs:    dense   smooth      PW
+     Min           9       9      3                   70       70      19
+     Max          10      10      4                   72       72      22
+     Sum         151     151     61                 1139     1139     331
+
+     Reading collected, re-writing distributed wavefunctions
+
+     NLCC is absent
+
+     call write_wfng
+     done write_wfng
+
+     call write_vxc_g
+[df871e82a8ce:00271] 15 more processes have sent help message help-btl-vader.txt / cma-permission-denied
+[df871e82a8ce:00271] Set MCA parameter "orte_base_help_aggregate" to 0 to see all help / error messages
+     done write_vxc_g
+
+     call write_rhog
+     done write_rhog
+
+
+     write_wfng   :      0.95s CPU      0.98s WALL (       1 calls)
+     write_rhog   :      0.00s CPU      0.00s WALL (       1 calls)
+     write_vxc_g  :      1.95s CPU      2.02s WALL (       1 calls)
+
+     PW2BGW       :      4.55s CPU      4.75s WALL
+
+
+   This run was terminated on:   0: 2: 3  21Sep2026            
+
+=------------------------------------------------------------------------------=
+   JOB DONE.
+=------------------------------------------------------------------------------=

@@ -1,0 +1,12 @@
+snapshots:
+  ale/base-coding-python-data:20260924-1:
+    provider: docker
+    image: ale-python-data
+    docker:
+      image_ref: ale/base-coding-python-data:20260924-1
+      expected_image_id: sha256:d3900c27bc66f938b79547c5df8e3d389a95bb1f1d712f31244e586779b33593
+      cpus: 4
+      memory: 8g
+      apparmor_unconfined: true
+task_data_source: null
+output_path: null

@@ -1,0 +1,137 @@
+# Reusable data-free Docker snapshots for generated physical-sciences tasks.
+# Task data, evaluator-only references and the selected agent harness are
+# injected separately. Image IDs are locked in
+# scripts/train_gen/physic_sciences/base_images/{science-stacks,qe-bgw,native-solvers}/.
+snapshots:
+  physical-numerics:
+    provider: docker
+    image: ale-ubuntu22-docker
+    docker:
+      image_ref: ale/base-physical-numerics:20260922-1
+      expected_image_id: sha256:d1e02b8f92b189b6d870eafc7df587b75c956fef4dc7b4ae19edb279fb0febb9
+      shm_size: 2g
+      resolution: [1024, 768]
+      apparmor_unconfined: true
+
+  physical-earth-space:
+    provider: docker
+    image: ale-ubuntu22-docker
+    docker:
+      image_ref: ale/base-physical-earth-space:20260922-1
+      expected_image_id: sha256:ede2ab0bfdb701cc7d6a20cb255003ff9eb118067bdb2e5c99b5204105cccc62
+      shm_size: 2g
+      resolution: [1024, 768]
+      apparmor_unconfined: true
+
+  physical-chem-materials:
+    provider: docker
+    image: ale-ubuntu22-docker
+    docker:
+      image_ref: ale/base-physical-chem-materials:20260922-1
+      expected_image_id: sha256:b8b74f91df9f634c5ae81238ed1369b7a6e3fd81e7a92b1d9f8730000164fba7
+      shm_size: 2g
+      resolution: [1024, 768]
+      apparmor_unconfined: true
+
+  physical-modeling:
+    provider: docker
+    image: ale-ubuntu22-docker
+    docker:
+      image_ref: ale/base-physical-modeling:20260922-1
+      expected_image_id: sha256:78bd8fb955d75107b524d5df9de7027f675c6e6322bea68d1a43c7a38f707f19
+      shm_size: 2g
+      resolution: [1024, 768]
+      apparmor_unconfined: true
+
+  physical-spectroscopy-scattering:
+    provider: docker
+    image: ale-ubuntu22-docker
+    docker:
+      image_ref: ale/base-physical-spectroscopy-scattering:20260922-1
+      expected_image_id: sha256:31cd359268984eb48f47a6ecc5302af8710d05b591c779df71ec90f0ceefb7e2
+      shm_size: 2g
+      resolution: [1024, 768]
+      apparmor_unconfined: true
+
+  physical-molecular-simulation:
+    provider: docker
+    image: ale-ubuntu22-docker
+    docker:
+      image_ref: ale/base-physical-molecular-simulation:20260922-1
+      expected_image_id: sha256:e5541633cc66c6838f9d4c5e114d58107ff7acb479dc6c1651ffaa10c50b56f5
+      shm_size: 2g
+      resolution: [1024, 768]
+      apparmor_unconfined: true
+
+  physical-hep-nuclear:
+    provider: docker
+    image: ale-ubuntu22-docker
+    docker:
+      image_ref: ale/base-physical-hep-nuclear:20260922-1
+      expected_image_id: sha256:b9398e30f75c8fd19802203e811250fa5ec580379fcc4e4f15880adaf96d8469
+      shm_size: 2g
+      resolution: [1024, 768]
+      apparmor_unconfined: true
+
+  physical-quantum-manybody:
+    provider: docker
+    image: ale-ubuntu22-docker
+    docker:
+      image_ref: ale/base-physical-quantum-manybody:20260922-1
+      expected_image_id: sha256:c67e594f3e2932497af16329f182665fe49c3b3666aafb6efa3b4e4de6758e3e
+      shm_size: 2g
+      resolution: [1024, 768]
+      apparmor_unconfined: true
+
+  physical-continuum-plasma:
+    provider: docker
+    image: ale-ubuntu22-docker
+    docker:
+      image_ref: ale/base-physical-continuum-plasma:20260922-1
+      expected_image_id: sha256:74adf5c9a9f26b3858dab0de122ea50655b2ae462610df3cbdbf109e30295974
+      shm_size: 2g
+      resolution: [1024, 768]
+      apparmor_unconfined: true
+
+  physical-qe-bgw:
+    provider: docker
+    image: ale-ubuntu22-docker
+    docker:
+      image_ref: ale/base-physical-qe-bgw:6.7.0-4.0-20260922
+      expected_image_id: sha256:8a9714abe796dc1d95e7080ea574ed8357a42ec31dbc759beae0e83662710a2f
+      shm_size: 2g
+      resolution: [1024, 768]
+      apparmor_unconfined: true
+
+  physical-lammps:
+    provider: docker
+    image: ale-ubuntu22-docker
+    docker:
+      image_ref: ale/base-physical-lammps:20261005-1
+      expected_image_id: sha256:367aef24fdf1fb1bc49dbe095930a180c59c5f39989b88518b0d192b35d552d9
+      shm_size: 2g
+      resolution: [1024, 768]
+      apparmor_unconfined: true
+
+  physical-photonics:
+    provider: docker
+    image: ale-ubuntu22-docker
+    docker:
+      image_ref: ale/base-physical-photonics:20261005-1
+      expected_image_id: sha256:543606083de67c86326acb5a1350cafe9766c7849fd2bf4b49b6d8991872628f
+      shm_size: 2g
+      resolution: [1024, 768]
+      apparmor_unconfined: true
+
+  physical-fenicsx:
+    provider: docker
+    image: ale-ubuntu22-docker
+    docker:
+      image_ref: ale/base-physical-fenicsx:20261005-1
+      expected_image_id: sha256:7638784d1460ff5d19555e5837d3abb56ebfb9528dfe2e0e4721923c5f4dedc3
+      shm_size: 2g
+      resolution: [1024, 768]
+      apparmor_unconfined: true
+
+task_data_source: local:task-data
+output_path: null

@@ -1,0 +1,22 @@
+{
+  "taskId": "engineering/nvdla_pdp_telemetry_repair",
+  "title": "Repair and sign off per-layer PDP telemetry in NVDLA",
+  "taskName": "NVDLA PDP Telemetry Repair",
+  "category": "engineering",
+  "summary": "Diagnose per-layer PDP stall statistics and integrate banked request-phase telemetry into nv_small RTL and CSB.",
+  "software": ["NVDLA nv_small", "Verilator 3.912", "Clang 14", "Docker", "Python"],
+  "tags": ["eda", "rtl", "verilog", "nvdla", "verification"],
+  "variants": ["base"],
+  "taskPrompt": "Repair existing PDP/PDP_RDMA stall statistics and implement the banked request-phase cycle and accepted-atom registers specified in the supplied TASK.md and SPEC.md.",
+  "inputFiles": [
+    {"name": "TASK.md", "path": "input/TASK.md", "format": "Markdown"},
+    {"name": "SPEC.md", "path": "input/SPEC.md", "format": "Markdown"},
+    {"name": "Initial RTL", "path": "input/rtl", "format": "Verilog"},
+    {"name": "Public tools and examples", "path": "input", "format": "Directory"}
+  ],
+  "evaluation": "Twelve equally weighted v8 checks. Rebuild the complete Verilator model from output/rtl, then verify actual CSB reads, independent request events, tensor data, guards, CRC and component boundary behavior. Infrastructure errors are not zero scores.",
+  "vm": {"snapshot": "cpu-free-ubuntu", "os": "linux"},
+  "requiredSystemPackages": ["Docker", "Python >=3.10"],
+  "runtimeImage": "sha256:705d168a80256782d67b2e5063fa326a2b6c5e984fd98fd59508f7bd8f199d9e",
+  "seedCommit": "771f20cc9e69759d7277978eb41e8d47f1547374"
+}

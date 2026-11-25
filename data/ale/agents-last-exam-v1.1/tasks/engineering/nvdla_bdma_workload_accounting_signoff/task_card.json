@@ -1,0 +1,30 @@
+{
+  "taskId": "engineering/nvdla_bdma_workload_accounting_signoff",
+  "title": "NVDLA BDMA Mixed-Workload Release Signoff",
+  "taskName": "NVDLA BDMA Mixed-Workload Release Signoff",
+  "summary": "Diagnose interacting BDMA integration regressions, implement saturating per-launch-group workload accounting, and close a clean native release matrix.",
+  "category": "engineering",
+  "software": ["NVDLA hardware nvdlav1", "Verilator 3.912", "Docker", "GNU Make"],
+  "tags": ["eda", "rtl", "verilog", "nvdla", "bdma", "register-interface", "verification"],
+  "taskPrompt": "Bring a deliberately regressed NVDLA BDMA integration snapshot to release quality. Diagnose failures across strided 3D copies, mixed MC/CVSRAM command batches, and launch groups; add four read-only workload-accounting registers with wide saturating arithmetic; and pass clean native Verilator signoff without being told the defect locations.",
+  "agentMustDo": [
+    "Use native trace failures and RTL inspection to diagnose the integration snapshot without a disclosed mutation list.",
+    "Restore strided, multi-surface, mixed-memory, back-to-back, and group1 behavior without breaking simple transfers.",
+    "Implement all four read-only registers and launch-group aggregation semantics inside vmod/nvdla/bdma.",
+    "Handle wide arithmetic and saturating accumulation without wrapping.",
+    "Run the public release matrix and record root causes, design decisions, and verification evidence in JOURNAL.md."
+  ],
+  "inputFiles": [
+    {"name": "task_instructions.md", "format": "Markdown", "path": "input/task_instructions.md", "description": "Register map, arithmetic, lifecycle, scope, and output contract."},
+    {"name": "public_tests", "format": "NVDLA traceplayer directories", "path": "input/public_tests", "description": "A simple passing control plus visible 3D, mixed-memory sequence, and accounting qualification traces."}
+  ],
+  "referenceFiles": [
+    {"name": "BDMA RTL source", "format": "Verilog source directory", "path": "output/workspace/vmod/nvdla/bdma", "description": "The complete submitted BDMA RTL overlaid on a clean pinned seed for grading."},
+    {"name": "JOURNAL.md", "format": "Markdown", "path": "output/JOURNAL.md", "description": "Design choices and exact tests run."}
+  ],
+  "evaluation": "The evaluator overlays the submission on a clean pinned seed and performs a clean native Verilator rebuild. Hidden gates cover asymmetric line strides, independent source/destination surface strides, all MC/CVSRAM directions, back-to-back source switching, group1 completion, single and multi-command accounting, independent group snapshots, and saturation. The deliberately regressed starter earns only a small smoke-test fraction.",
+  "vm": {"machineType": "n2-highmem-4", "snapshot": "nvdla-ubuntu", "os": "linux", "project": "sunblaze-4", "zone": "us-west2-a", "name": "agenthle-ubuntu", "timeout": 28800},
+  "variants": ["base"],
+  "taxonomy": {"domain_id": "1", "domain_code": "engineering", "subdomain_id": "1.8", "subdomain_code": "semiconductor", "subdomain_name": "Semiconductor & Microelectronics Design"},
+  "requiredSystemPackages": ["docker-ce", "ale/task-nvdla-bdma-accounting:8e06b1b9-v2"]
+}

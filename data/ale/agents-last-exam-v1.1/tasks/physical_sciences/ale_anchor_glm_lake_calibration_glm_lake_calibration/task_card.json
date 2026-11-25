@@ -1,0 +1,88 @@
+{
+  "taskId": "physical_sciences/ale_anchor_glm_lake_calibration_glm_lake_calibration",
+  "title": "GLM-inspired lake thermal calibration with hidden season",
+  "summary": "Calibrate a staged five-layer lake heat model from visible observations, then validate the namelist on an evaluator-only forcing season.",
+  "category": "physical_sciences",
+  "software": [
+    "Python 3.10.12 (stdlib only)"
+  ],
+  "taskPrompt": "Read input/problem_spec.md. Edit only input/model.nml, run software/run_model.sh, and produce output/simulation.csv plus output/calibration_summary.json. Match the visible temperature observations while preserving the physical units and schema; the evaluator reruns a hidden forcing season.",
+  "agentMustDo": [
+    "inspect the executable model equations, forcing and observations",
+    "calibrate all five namelist coefficients without modifying staged inputs",
+    "run the wrapper and inspect the intermediate calibration summary",
+    "leave exactly the two required output artifacts"
+  ],
+  "inputFiles": [
+    {
+      "name": "problem_spec.md",
+      "format": "Markdown",
+      "path": "input/problem_spec.md",
+      "description": "Equations, units, workflow and exact output contract"
+    },
+    {
+      "name": "model.nml",
+      "format": "Namelist-like text",
+      "path": "input/model.nml",
+      "description": "Only solve-time input the agent may edit; five bounded calibration coefficients"
+    },
+    {
+      "name": "forcing_visible.csv",
+      "format": "CSV",
+      "path": "input/forcing_visible.csv",
+      "description": "120-day visible air temperature, short-wave and wind forcing"
+    },
+    {
+      "name": "observations_visible.csv",
+      "format": "CSV",
+      "path": "input/observations_visible.csv",
+      "description": "Visible five-depth temperature observations in degC"
+    }
+  ],
+  "referenceFiles": [
+    {
+      "name": "forcing_hidden.csv",
+      "format": "CSV",
+      "path": "reference/forcing_hidden.csv",
+      "description": "Evaluator-only 147-day forcing trajectory"
+    },
+    {
+      "name": "observations_hidden.csv",
+      "format": "CSV",
+      "path": "reference/observations_hidden.csv",
+      "description": "Evaluator-only hidden-season target"
+    },
+    {
+      "name": "evaluation_contract.json",
+      "format": "JSON",
+      "path": "reference/evaluation_contract.json",
+      "description": "Evaluator-only hashes, tolerances and dimensions"
+    }
+  ],
+  "evaluation": "Malformed, missing, extra, nonfinite, wrong-unit, input-integrity, and rerun-mismatch outputs score 0. The rubric is output/schema 0.15, rerun fidelity 0.20, visible RMSE <=0.12 degC 0.25, hidden RMSE <=0.18 degC 0.30, and an independent bounded-temperature/gradient invariant 0.10.",
+  "vm": {
+    "machineType": "c4-standard-2",
+    "snapshot": "cpu-free-ubuntu",
+    "vcpus": 2,
+    "memory_gb": 2,
+    "disk_gb": 4,
+    "timeout_s": 3600
+  },
+  "requiredSystemPackages": [],
+  "taxonomy": {
+    "domain_code": "physical_sciences",
+    "subdomain_code": "earth_atmo",
+    "subdomain_name": "Environmental Modeling, Engineering & Water Resources"
+  },
+  "resource_budget": {
+    "runtime_seconds": 60,
+    "memory_mib": 256,
+    "network": false
+  },
+  "provenance": {
+    "upstream_name": "Agents' Last Exam",
+    "upstream_url": "https://github.com/rdi-berkeley/agents-last-exam/tree/main/tasks/physical_sciences/glm_lake_calibration",
+    "license": "Apache-2.0",
+    "adaptation": "Benchmark-authored compact surrogate; no upstream GLM binary or field data are redistributed."
+  }
+}

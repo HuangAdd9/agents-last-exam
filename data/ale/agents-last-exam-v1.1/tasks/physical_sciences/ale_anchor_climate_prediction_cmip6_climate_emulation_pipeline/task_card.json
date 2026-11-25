@@ -1,0 +1,88 @@
+{
+  "taskId": "physical_sciences/ale_anchor_climate_prediction_cmip6_climate_emulation_pipeline",
+  "title": "CMIP6 SSP245 climate-emulation audit",
+  "summary": "Fit a physically unit-aware spatiotemporal emulator from a compact CMIP6-style training fixture and forecast a hidden SSP245 window plus a withheld perturbation.",
+  "category": "physical_sciences",
+  "software": [
+    "Python 3.10",
+    "NumPy"
+  ],
+  "taskPrompt": "Read input/problem_spec.md and complete the deterministic climate-emulation workflow. Build the exact 11-term design matrix from the 108 training months, fit one least-squares emulator per variable and grid cell using training rows only, forecast the 12-month SSP245 test forcing, and write every required artifact under output/. Preserve K and mm/day units, the intermediate preprocessing archive, coefficient field, metadata hash, summary invariant, and ordered CSV. No internet; runtime 60 seconds and 512 MiB.",
+  "agentMustDo": [
+    "load and validate the visible forcing/target fixture",
+    "construct the specified design matrix and intermediate artifact",
+    "fit training-only coefficients and forecast SSP245",
+    "write exact archives, metadata, summary, coefficient field, and CSV"
+  ],
+  "inputFiles": [
+    {
+      "name": "climate_fixture.npz",
+      "format": "NumPy archive",
+      "path": "input/climate_fixture.npz",
+      "description": "Benchmark-authored compact CMIP6-style forcing and training target fixture"
+    },
+    {
+      "name": "problem_spec.md",
+      "format": "Markdown",
+      "path": "input/problem_spec.md",
+      "description": "Scientific model and output contract"
+    },
+    {
+      "name": "metadata.json",
+      "format": "JSON",
+      "path": "input/metadata.json",
+      "description": "Units, dimensions, and scenario metadata"
+    },
+    {
+      "name": "Starter.md",
+      "format": "Markdown",
+      "path": "input/Starter.md",
+      "description": "Workflow guide"
+    },
+    {
+      "name": "output_contract.json",
+      "format": "JSON",
+      "path": "input/output_contract.json",
+      "description": "Exact output paths and shapes"
+    }
+  ],
+  "referenceFiles": [
+    {
+      "name": "reference_arrays.npz",
+      "format": "NumPy archive",
+      "path": "reference/reference_arrays.npz",
+      "description": "Evaluator-only SSP245 and perturbation targets"
+    },
+    {
+      "name": "evaluation_contract.json",
+      "format": "JSON",
+      "path": "reference/evaluation_contract.json",
+      "description": "Evaluator tolerances and hidden hash"
+    }
+  ],
+  "evaluation": "Contract gates return 0 for missing, malformed, extra, nonfinite, wrong-unit, or wrong-shape outputs. Score weights: CSV 0.10; SSP245 tas RMSE 0.20; SSP245 precipitation RMSE 0.20; coefficient field 0.20; evaluator-only forcing perturbation 0.20; latitude-area weighted physical invariant 0.10. Full score requires all components.",
+  "vm": {
+    "machineType": "c4-standard-2",
+    "snapshot": "cpu-free-ubuntu",
+    "vcpus": 2,
+    "memory_gb": 2,
+    "disk_gb": 8,
+    "timeout_s": 3600
+  },
+  "requiredSystemPackages": [],
+  "taxonomy": {
+    "domain_code": "physical_sciences",
+    "subdomain_code": "earth_atmo",
+    "subdomain_name": "Earth & Atmospheric Sciences"
+  },
+  "resource_budget": {
+    "runtime_seconds": 60,
+    "memory_mib": 512,
+    "network": false
+  },
+  "provenance": {
+    "upstream_name": "Agents' Last Exam",
+    "upstream_url": "https://github.com/rdi-berkeley/agents-last-exam/tree/main/tasks/physical_sciences/climate_prediction",
+    "license": "Apache-2.0"
+  }
+}

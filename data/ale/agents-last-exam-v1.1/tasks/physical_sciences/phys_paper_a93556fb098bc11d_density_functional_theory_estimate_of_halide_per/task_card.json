@@ -1,0 +1,15 @@
+{
+  "taskId":"physical_sciences/phys_paper_a93556fb098bc11d_density_functional_theory_estimate_of_halide_per",
+  "title":"K-resolved Orbital/SOC Band Gaps for Halide Perovskites",
+  "summary":"Evaluate a bounded two-orbital k-mesh Hamiltonian, apply the documented Pb-only SOC valence term, and compute a blackbody spectral-capture observable.",
+  "category":"physical_sciences",
+  "software":["Python 3 standard library","NumPy (preinstalled snapshot)"],
+  "taskPrompt":"Read input/problem_spec.md and input/materials.csv. Implement the specified 9x9x9 two-orbital k-resolved band-edge Hamiltonian, diagonalising the Pb-only valence SOC term and extracting VBM/CBM. Produce band_gaps.csv, spectral_capture.csv, summary.json, and invariants.json exactly as specified, preserving input order and working offline.",
+  "agentMustDo":["Validate every input row and geometry unit.","Sample the full k mesh and extract VBM/CBM from the orbital dispersions.","Apply SOC only to Pb using the documented form factor.","Compute the 8000-point blackbody spectral-capture integral and all four exact output files."],
+  "inputFiles":[{"name":"problem_spec.md","format":"Markdown","path":"input/problem_spec.md"},{"name":"materials.csv","format":"CSV","path":"input/materials.csv"},{"name":"README.txt","format":"Text","path":"input/README.txt"}],
+  "referenceFiles":[{"name":"materials_hidden.csv","format":"CSV","path":"reference/materials_hidden.csv"}],
+  "evaluation":"Hard gates reject missing/malformed files and enforce every row's exact schema, finite values, IDs, and order. Score is weighted: schema 0.10, hidden Hamiltonian band gaps 0.40, Pb-only SOC flags bound to hidden material IDs 0.20, hidden spectral capture 0.15, summary 0.10, recomputed invariants 0.05. Numeric tolerances are 2e-5 eV and 3e-5 dimensionless; hidden rows are independently recomputed by the host oracle.",
+  "vm":{"machineType":"c4-standard-2","snapshot":"cpu-free-ubuntu","timeout":3600},
+  "taxonomy":{"domain_id":"2","domain_code":"physical_sciences","subdomain_id":"2.2","subdomain_code":"chemistry_materials","subdomain_name":"Chemistry & Materials Computation"},
+  "requiredSystemPackages":[]
+}

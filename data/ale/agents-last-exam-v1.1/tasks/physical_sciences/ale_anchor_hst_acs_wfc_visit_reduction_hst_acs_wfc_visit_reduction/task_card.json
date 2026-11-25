@@ -1,0 +1,83 @@
+{
+  "taskId": "physical_sciences/ale_anchor_hst_acs_wfc_visit_reduction_hst_acs_wfc_visit_reduction",
+  "title": "ACS/WFC dither reduction with hidden visit validation",
+  "summary": "Reduce benchmark-authored ACS/WFC count-rate exposures: DQ masking, subpixel alignment, drizzle-like coaddition, aperture photometry, and astrometric QC.",
+  "category": "physical_sciences",
+  "software": [
+    "Python 3.10.12",
+    "standard library only at solve time"
+  ],
+  "taskPrompt": "Read input/TASK_PROMPT.md. Implement output/reduce_visit.py and run it on the visible visit. The evaluator adds a hidden visit with different source and dither parameters.",
+  "agentMustDo": [
+    "mask DQ bits 4096 and 16",
+    "align all exposures using association shifts and write the intermediate 72x72 mosaic",
+    "perform anchor-centered aperture photometry and WCS conversion",
+    "write all five exact per-visit artifacts and a QC report"
+  ],
+  "inputFiles": [
+    {
+      "name": "TASK_PROMPT.md",
+      "format": "Markdown",
+      "path": "input/TASK_PROMPT.md",
+      "description": "Scientific workflow and exact output contract."
+    },
+    {
+      "name": "visit_bluefield",
+      "format": "CSV and JSON directory",
+      "path": "input/visit_bluefield/",
+      "description": "Visible synthetic F606W visit with three dithered exposures, DQ masks, association and Gaia-like anchors."
+    },
+    {
+      "name": "runtime_env.toml",
+      "format": "TOML",
+      "path": "input/runtime_env.toml",
+      "description": "Solve-time runtime declaration; standard library only."
+    },
+    {
+      "name": "starter_project.py",
+      "format": "Python",
+      "path": "input/starter_project.py",
+      "description": "Minimal starter hint."
+    }
+  ],
+  "referenceFiles": [
+    {
+      "name": "hidden_input",
+      "format": "CSV and JSON directory",
+      "path": "reference/hidden_input/visit_redfield/",
+      "description": "Evaluator-only F814W visit with five sources and four different dithers."
+    },
+    {
+      "name": "reference_outputs",
+      "format": "CSV, JSON and Markdown directories",
+      "path": "reference/reference_outputs/{visible,hidden}/",
+      "description": "Oracle artifacts used only by evaluate()."
+    }
+  ],
+  "evaluation": "Malformed, missing, nonfinite, wrong-schema, or missing-visit output returns 0. The normalized rubric is image/schema 0.35, source completeness and flux 0.30, astrometry/alignment 0.20, QC invariants 0.10, and required report methods 0.05. A score of 0.80 passes; the hidden visit prevents copying the visible answer.",
+  "vm": {
+    "machineType": "c4-standard-2",
+    "snapshot": "cpu-free-ubuntu",
+    "vcpus": 2,
+    "memory_gb": 2,
+    "disk_gb": 4,
+    "timeout_s": 3600
+  },
+  "requiredSystemPackages": [],
+  "resource_budget": {
+    "runtime_seconds": 60,
+    "memory_mib": 256,
+    "network": false
+  },
+  "taxonomy": {
+    "domain_code": "physical_sciences",
+    "subdomain_code": "astronomy",
+    "subdomain_name": "Astronomy & Astrophysics"
+  },
+  "provenance": {
+    "upstream_name": "Agents' Last Exam",
+    "upstream_url": "https://github.com/rdi-berkeley/agents-last-exam/tree/main/tasks/physical_sciences/hst_acs_wfc_visit_reduction",
+    "license": "Apache-2.0 for code repository; generated benchmark data are authored locally",
+    "adaptation": "image_or_gui_input_to_identity_or_reduction; transformed to a new compact CSV/JSON ACS instance with benchmark-authored visible and hidden visits; no upstream FITS bytes are redistributed"
+  }
+}

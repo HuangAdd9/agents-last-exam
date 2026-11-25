@@ -1,0 +1,52 @@
+{
+  "taskId": "physical_sciences/ale_anchor_gillespie_gene_regulatory_network_gillespie_ssa_for_a_tristable_gene_regulatory_ne",
+  "title": "Gillespie SSA and tau-leaping audit for a hidden tristable toggle",
+  "summary": "Implement exact SSA, basin statistics, an alpha scan, and guarded tau-leaping for a three-gene mutual-inhibition network; the evaluator reruns the reusable solver on a hidden parameter regime.",
+  "category": "physical_sciences",
+  "software": [
+    "Python 3.10.12 (/usr/bin/python3)",
+    "NumPy 2.2.6"
+  ],
+  "taskPrompt": "Read input/problem_spec.md and implement the reusable solver and exact output contract described there. Use input/model_config.json for the visible run. Save output/results.json, output/trajectory.csv, and output/gillespie_solver.py. The evaluator will execute your solver on a hidden configuration, so implement the model rather than hard-coding values.",
+  "agentMustDo": [
+    "implement exact Gillespie SSA with default_rng",
+    "write the trajectory intermediate artifact and structured statistics",
+    "implement nonnegative tau-leaping and alpha scan",
+    "ensure solver CLI accepts --config and --output"
+  ],
+  "inputFiles": [
+    {
+      "name": "problem_spec.md",
+      "path": "input/problem_spec.md"
+    },
+    {
+      "name": "model_config.json",
+      "path": "input/model_config.json"
+    }
+  ],
+  "referenceFiles": [
+    {
+      "name": "visible oracle",
+      "path": "reference/results.json"
+    },
+    {
+      "name": "hidden configuration and oracle",
+      "path": "reference/hidden_case/"
+    }
+  ],
+  "evaluation": "Hard schema and nonnegative-state gates precede numerical comparisons. Visible statistics, scan, tau comparison, source audit, and an evaluator-only hidden rerun are scored with explicit tolerances.",
+  "vm": {
+    "machineType": "c4-standard-4",
+    "snapshot": "cpu-free-ubuntu",
+    "vcpus": 4,
+    "memory_gb": 8,
+    "disk_gb": 20,
+    "timeout_s": 3600
+  },
+  "requiredSystemPackages": [],
+  "taxonomy": {
+    "domain_code": "physical_sciences",
+    "subdomain_code": "systems_microbial",
+    "subdomain_name": "Systems & Microbial Biology"
+  }
+}

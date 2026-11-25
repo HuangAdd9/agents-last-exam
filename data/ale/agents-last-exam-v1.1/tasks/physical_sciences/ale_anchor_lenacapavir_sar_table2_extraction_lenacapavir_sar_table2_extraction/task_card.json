@@ -1,0 +1,63 @@
+{
+  "taskId": "physical_sciences/ale_anchor_lenacapavir_sar_table2_extraction_lenacapavir_sar_table2_extraction",
+  "title": "Lenacapavir Table 2 SAR extraction with censored-clearance analysis",
+  "summary": "Transcribe the sourced Lenacapavir R1 SAR table, derive potency/rank fields, and provide a reusable analysis script validated on a hidden table.",
+  "category": "physical_sciences",
+  "software": [
+    "Python 3.10.12 (standard library only)"
+  ],
+  "taskPrompt": "Read input/TASK_PROMPT.md and the staged manuscript PDF. Extract Table 2 and produce submission.csv, analysis.json, and a reusable analyze_table.py under output/ with the exact schemas, units, censored-value conventions, and formulas specified.",
+  "agentMustDo": [
+    "Inspect page 8 of input/source_paper.pdf and transcribe compounds 23 and 25–40.",
+    "Write output/submission.csv with the exact seven-column schema and all 17 rows.",
+    "Compute pEC50, average-tie potency ranks, and HLM_class without changing source strings.",
+    "Write output/analysis.json with the specified counts, median, best compound, and Spearman invariant.",
+    "Write output/analyze_table.py that generalizes the analysis to an unseen evaluator table."
+  ],
+  "inputFiles": [
+    {
+      "name": "Source manuscript",
+      "format": "PDF",
+      "path": "input/source_paper.pdf",
+      "description": "Local staged copy of the cited J. Med. Chem. manuscript; Table 2 is on PDF page 8."
+    },
+    {
+      "name": "Rendered Table 2 page",
+      "format": "PNG",
+      "path": "input/page8_table2.png",
+      "description": "Benchmark-rendered page-8 view of the same PDF, supplied for offline inspection."
+    },
+    {
+      "name": "Task contract",
+      "format": "Markdown",
+      "path": "input/TASK_PROMPT.md",
+      "description": "Exact output schemas, units, formulas, and hidden-test requirement."
+    }
+  ],
+  "referenceFiles": [
+    {
+      "name": "Evaluator reference and hidden fixture",
+      "format": "CSV/JSON",
+      "path": "reference/",
+      "description": "Evaluator-controlled transcription, derived summary, and a benchmark-authored hidden table used only at evaluation."
+    }
+  ],
+  "evaluation": "Hard gates reject missing, oversized, malformed, wrong-header, duplicate-ID, or incomplete outputs. The score is 0.10 schema, 0.35 exact source-row transcription, 0.20 derived columns, 0.25 visible analysis invariant, and 0.10 hidden-table generalization. Numeric source strings, censored values, units, row set, formulas, and tie handling are checked deterministically.",
+  "vm": {
+    "machineType": "c4-standard-2",
+    "snapshot": "cpu-free-ubuntu",
+    "vcpus": 2,
+    "memory_gb": 2,
+    "disk_gb": 4,
+    "timeout_s": 3600,
+    "network": {
+      "mode": "off"
+    }
+  },
+  "taxonomy": {
+    "domain_code": "physical_sciences",
+    "subdomain_code": "biomolecular_structure_design",
+    "subdomain_name": "Biomolecular Structure & Design"
+  },
+  "requiredSystemPackages": []
+}

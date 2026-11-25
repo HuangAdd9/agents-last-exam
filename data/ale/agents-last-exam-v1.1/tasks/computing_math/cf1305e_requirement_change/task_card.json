@@ -1,0 +1,17 @@
+{
+  "taskId": "computing_math/cf1305e_requirement_change",
+  "title": "Score receipt consumer: recovered cutover export",
+  "summary": "Recover the current replay contract from a maintenance export and finish the C++ consumer.",
+  "category": "computing_math",
+  "taskPrompt": "接手 score distribution 回放消费者。按 input 盘面留下的调用关系和部署状态完成改造。交付 output/src/dynamic_checker.cpp，单个 C++17 翻译单元。公开检查工具为 software/smoke.py。运行限制和分组在交接导出中。",
+  "software": ["GNU C++17", "Python 3", "Bash"],
+  "inputFiles": [
+    {"name":"handoff export","path":"input/","format":"mixed text and source","description":"Versioned mail, wire fragment, quota export, legacy files and replay captures."}
+  ],
+  "referenceFiles": [{"name":"dynamic_checker.cpp","path":"output/src/dynamic_checker.cpp","format":"C++17","description":"Collected single translation unit."}],
+  "agentMustDo": ["Reconcile the current caller contract with the legacy workspace.","Implement the consumer in the collected C++17 source.","Validate against the visible captures and applicable limits."],
+  "evaluation": "Private legal replay streams. Compile C++17 -O2 -pipe, 30 seconds and 1024 MiB; execute each replay with 8 seconds wall and 256 MiB address space. Compare verdict tokens. A/B/C/D/E/F score 10/15/20/20/20/15, all cases in each group must pass. Infrastructure failure raises an error, not a zero score.",
+  "variants": ["base"],
+  "vm": {"snapshot":"cpu-free-ubuntu","os":"linux","vcpus":4,"memory_gb":8,"timeout_s":18000},
+  "requiredSystemPackages": ["g++","python3","sudo"]
+}

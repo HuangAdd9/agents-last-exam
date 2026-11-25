@@ -1,0 +1,77 @@
+{
+  "taskId": "computing_math/cf1095f_witness_recovery",
+  "category": "computing_math",
+  "title": "Commissioning construction export",
+  "description": "Finish the construction exporter from the accepted handover records. A correct scalar estimator is supplied; submit the commissioned optimal construction generator in output/solution.cpp.",
+  "software": [
+    "GNU C++17",
+    "Python 3",
+    "Bash"
+  ],
+  "inputFiles": [
+    {
+      "name": "README.md",
+      "path": "input/README.md",
+      "format": "Markdown",
+      "description": "Exporter handover."
+    },
+    {
+      "name": "contracts",
+      "path": "input/contracts",
+      "format": "text",
+      "description": "Commissioning change record and stream format."
+    },
+    {
+      "name": "archive",
+      "path": "input/archive",
+      "format": "text",
+      "description": "Revision-1 cost-service record."
+    },
+    {
+      "name": "solution.cpp",
+      "path": "input/solution.cpp",
+      "format": "C++17",
+      "description": "Verified scalar cost service; construction export incomplete."
+    },
+    {
+      "name": "release.txt",
+      "path": "input/release.txt",
+      "format": "text",
+      "description": "Execution and grading acceptance."
+    },
+    {
+      "name": "public",
+      "path": "input/public",
+      "format": "text",
+      "description": "Importer fixtures with scalar invoices."
+    }
+  ],
+  "referenceFiles": [
+    {
+      "name": "solution.cpp",
+      "path": "output/solution.cpp",
+      "format": "C++17",
+      "description": "Required candidate source file."
+    }
+  ],
+  "agentMustDo": [
+    "Reconcile the accepted commissioning and wire records with the supplied estimator.",
+    "Implement optimal construction export for the current input contract.",
+    "Submit output/solution.cpp."
+  ],
+  "evaluation": "Compile C++17 and run legal private projects (6 seconds, 512 MiB). Verify purchase identities, spanning-tree structure, nominated site's exact incident-edge count, invoice equality and constrained optimality. Independent Prim validates private dual certificates. Groups A/B/C/D/E award 10/20/20/25/25 points only if all their tests pass. Infrastructure errors are reported without numeric failure scores.",
+  "variants": [
+    "base"
+  ],
+  "vm": {
+    "snapshot": "cpu-free-ubuntu",
+    "os": "linux",
+    "vcpus": 4,
+    "memory_gb": 8,
+    "timeout_s": 18000
+  },
+  "requiredSystemPackages": [
+    "g++",
+    "python3"
+  ]
+}

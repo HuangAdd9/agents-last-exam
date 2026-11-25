@@ -1,0 +1,17 @@
+{
+  "taskId":"computing_math/cf1095f_requirement_change",
+  "title":"Cost Worker Deployment Handoff",
+  "summary":"Recover the deployed cost-worker contract and implement the migration.",
+  "category":"computing_math",
+  "taskPrompt":"Complete the cost-worker migration using the handoff workspace. Recover the deployed contract from the visible materials and submit C++17 source at output/solution.cpp. Use bash run_tests.sh in output for available gateway replay checks. Only the submitted source is evaluated.",
+  "software":["GNU C++17","Python 3","Bash"],
+  "inputFiles":[
+    {"name":"handoff workspace","path":"input","format":"text, C++ and JSON","description":"Cost-worker handoff materials."}
+  ],
+  "referenceFiles":[{"name":"solution.cpp","path":"output/solution.cpp","format":"C++17","description":"Required submitted source file."}],
+  "agentMustDo":["Recover the deployed requirements from the handoff records.","Implement the worker at the stated scale.","Save output/solution.cpp and run relevant checks."],
+  "evaluation":"Compile with g++ -std=gnu++17 -O2 -pipe. Execute deployed gateway jobs using real bidirectional pipes under 36-second total wall and 512-MiB address-space limits. Compare exact signed integer results and enforce the visible transport contract. Groups A/B/C/D/E award 10/20/20/25/25 points only when every case in that group passes. Infrastructure faults raise evaluation errors.",
+  "variants":["base"],
+  "vm":{"snapshot":"cpu-free-ubuntu","os":"linux","vcpus":4,"memory_gb":8,"timeout_s":18000},
+  "requiredSystemPackages":["g++","python3"]
+}

@@ -1,0 +1,25 @@
+# GPU route for locally authored Linux visual-media tasks. Enable this profile
+# only after docker/base/visual-media-gpu/verify-gpu.sh records a passed CUDA render.
+snapshots:
+  cpu-free-ubuntu:
+    provider: docker
+    image: ale-ubuntu22-docker
+    docker:
+      image_ref: ale/base-visual-media:20260922-2
+      shm_size: 2g
+      resolution: [1920, 1080]
+      apparmor_unconfined: true
+
+  gpu-free-ubuntu:
+    provider: docker
+    image: ale-ubuntu22-docker
+    docker:
+      image_ref: ale/base-visual-media-gpu:20260925-1
+      expected_image_id: sha256:dcfb9f1a55f34e41f87f29d37b18ff7cffa9c3f10b771f4981fed885b7ad65ec
+      gpus: all
+      shm_size: 2g
+      resolution: [1920, 1080]
+      apparmor_unconfined: true
+
+task_data_source: local:task-data
+output_path: null

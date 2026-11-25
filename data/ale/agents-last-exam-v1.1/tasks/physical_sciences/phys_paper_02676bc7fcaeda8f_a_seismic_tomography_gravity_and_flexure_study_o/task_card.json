@@ -1,0 +1,15 @@
+{
+  "taskId":"physical_sciences/phys_paper_02676bc7fcaeda8f_a_seismic_tomography_gravity_and_flexure_study_o",
+  "title":"Ka'ena-style P-wave density, gravity, and elastic flexure inversion",
+  "summary":"Convert a 2-D P-wave profile to density, forward-model a line-integral gravity anomaly, and invert periodic plate flexure for elastic thickness on hidden changed geometries.",
+  "category":"physical_sciences",
+  "software":["Python 3.10.12 (/usr/bin/python3)","NumPy 2.2.6"],
+  "taskPrompt":"Read input/spec.md and input/problem.json. Implement output/solve.py with the exact density, gravity, Fourier plate-flexure, grid-search, trace, and invariant contract. The evaluator runs the same solver on two hidden profiles; network access and reference/ access are forbidden.",
+  "agentMustDo":["Read the full scientific specification","Write reusable output/solve.py accepting --input PATH --output DIR","Emit result.npz, trace.csv, and summary.json with exact keys, units, shapes, and finite values","Use the supplied velocity/depth geometry rather than copying visible outputs"],
+  "inputFiles":[{"name":"problem.json","format":"JSON","path":"input/problem.json","description":"Synthetic benchmark-authored Ka'ena-style layered P-wave profile, gravity observations, and flexure observations."},{"name":"spec.md","format":"Markdown","path":"input/spec.md","description":"Exact physical formulas, units, grid-search convention, and output schemas."}],
+  "referenceFiles":[{"name":"hidden_case.json","format":"JSON","path":"reference/hidden_case.json","description":"Evaluator-only changed 20-cell profile, layer velocities, and elastic-thickness grid."},{"name":"hidden_geometry.json","format":"JSON","path":"reference/hidden_geometry.json","description":"Evaluator-only changed 10-cell geometry and layer structure."}],
+  "evaluation":"Score is 0.85 for complete physical arrays (including positive density and Te) and an additional 0.15 only when those arrays, the exact intermediate Te trace, and the units/invariant summary all pass. The candidate must also pass both hidden recomputations; scores are averaged across visible and hidden cases. Missing or malformed output scores 0.",
+  "vm":{"machineType":"c4-standard-2","snapshot":"cpu-free-ubuntu","timeout":1800,"vcpus":2,"memory_gb":4,"disk_gb":10},
+  "taxonomy":{"domain_id":"2","domain_code":"physical_sciences","subdomain_id":"2.1","subdomain_code":"earth_and_environmental_sciences","subdomain_name":"Earth and Environmental Sciences"},
+  "requiredSystemPackages":[]
+}
