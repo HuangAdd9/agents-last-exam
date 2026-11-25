@@ -8,7 +8,7 @@ from ale_run.environments.providers import docker
 
 
 @pytest.mark.parametrize("ready", [True, False])
-def test_init_locale_local_bindings_and_cleanup(monkeypatch, ready):
+def test_init_locale_local_bindings_and_cleanup(monkeypatch, tmp_path, ready):
     calls = []
 
     async def run_docker(*args):
@@ -22,6 +22,9 @@ def test_init_locale_local_bindings_and_cleanup(monkeypatch, ready):
     monkeypatch.setattr(docker, "_get_host_port", AsyncMock(return_value=12345))
     monkeypatch.setattr(docker, "_wait_cua_ready", AsyncMock(return_value=ready))
     monkeypatch.setattr(docker, "_get_resource_limits", AsyncMock(return_value={}))
+    monkeypatch.setattr(docker, "_occupied_cpus", AsyncMock(return_value=set()))
+    monkeypatch.setattr(docker, "_CPUSET_LOCK_PATH", tmp_path / "cpuset.lock")
+    monkeypatch.setattr(docker.os, "sched_getaffinity", lambda _: {2, 4})
     provider = docker.DockerProvider({"image": "ale-ubuntu22-docker", "cpus": 2, "memory": "2g"})
     spec = SandboxSpec(snapshot="test", task_id="review-only")
     if ready:
@@ -36,5 +39,6 @@ def test_init_locale_local_bindings_and_cleanup(monkeypatch, ready):
     ports = [args[index + 1] for index, value in enumerate(args) if value == "-p"]
     assert len(ports) == 2 and all(port.startswith("127.0.0.1:0:") for port in ports)
     assert args[args.index("--cpus") + 1] == "2.0"
+    assert args[args.index("--cpuset-cpus") + 1] == "2,4"
     assert args[args.index("--memory") + 1] == "2g"
     assert calls[-1][:2] == ("rm", "-f")

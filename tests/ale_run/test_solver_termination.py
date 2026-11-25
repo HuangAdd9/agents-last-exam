@@ -239,6 +239,46 @@ async def test_background_work_uses_remaining_budget(contained_executor):
     assert_tree_stopped(executor)
 
 
+@pytest.mark.parametrize("mode", ["completed", "failed"])
+async def test_finished_worker_reclaims_detached_tools_after_drain_grace(disk_executor, mode):
+    executor = disk_executor
+    work = Path(executor.work_dir)
+    work.mkdir()
+    spec_path = work / "_spec.json"
+    spec_path.write_text(json.dumps({
+        "work_dir": str(work), "run_token": executor._run_token, "timeout_s": 20,
+        "deployer_module": __name__, "deployer_class": "TreeDeployer",
+        "config_module": __name__, "config_class": "TreeConfig",
+        "config_kwargs": asdict(TreeConfig(mode=mode, tool_duration_s=30)),
+        "sandbox_kwargs": asdict(executor.sandbox), "prompt": "test",
+        "install_agent_deps": False,
+    }))
+    bootstrap = (
+        "from ale_run.executors import _sandbox_entry as entry; "
+        "entry._BACKGROUND_DRAIN_TIMEOUT_S = 0.25; "
+        "raise SystemExit(entry.main())"
+    )
+    unrelated = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        result = await asyncio.to_thread(
+            subprocess.run, [sys.executable, "-c", bootstrap, str(spec_path)],
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
+        )
+        assert result.returncode == 0, result.stderr
+        out = json.loads((work / "_result.json").read_text())
+        assert out["status"] == mode
+        assert out["duration_s"] < 10
+        assert out["ok"] is (mode == "completed")
+        assert not (work / "output.complete").exists()
+        assert (work / "_done.marker").exists()
+        assert "reclaiming remaining background processes" in result.stderr
+        assert_tree_stopped(executor)
+        assert unrelated.poll() is None
+    finally:
+        unrelated.kill()
+        unrelated.wait(timeout=5)
+
+
 @pytest.mark.parametrize("mode", ["install_timeout", "install_failure", "install_hang"])
 async def test_real_install_failure_never_marks_launch(contained_executor, mode):
     executor = contained_executor
