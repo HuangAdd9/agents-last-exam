@@ -13,7 +13,8 @@ The deployer's surface:
                       AgentRunResult
   parse_artifacts():  reads work_dir's transcripts → ATIF Steps via builder
 
-The in-tree harness lives at :mod:`.harness`.
+The OpenClaw harness itself is unchanged (lives at :mod:`.harness`,
+copied from ``cua_bench/agents/openclaw/`` upstream).
 """
 from __future__ import annotations
 
@@ -22,6 +23,7 @@ import os
 import sys
 import time
 import uuid
+from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -163,8 +165,48 @@ class AleClawDeployer(BaseAgentDeployer):
             ephemeral=False,        # env lifecycle is owned by ALEEnv
             headless=True,
         )
-        if not await session.check_status():
-            raise RuntimeError("ale-claw: sandbox desktop session is unavailable")
+        await session.check_status()
+
+        # ---- 1b. MCP substrate (non-GUI tools route through the vm bridge) ----
+        # Build the runtime object now (so build_tools can wire the backends to
+        # it); it is *connected* later, around the drive loop, and torn down with
+        # it. GUI stays on `session` in Phase 1. For the `local`/`docker`
+        # executor the bridge runs on the host and points at the same cua-server
+        # endpoint the harness already uses (cua_bridge_url == sb.endpoint), so
+        # there is no extra network hop.
+        mcp_runtime = None
+        if cfg.substrate_transport == "mcp":
+            from ale_run.agents._bootstrap import (
+                cua_bridge_env,
+                ensure_cua_mcp_server_at,
+                ensure_node_npm,
+                ensure_vm_mcp_server,
+                vm_bridge_env,
+            )
+            from mcp.client.stdio import StdioServerParameters
+
+            from .harness.tools.mcp_runtime import MCPRuntime
+
+            node_path, _ = await ensure_node_npm()
+            servers: dict[str, Any] = {}
+            vm_bridge_dir = await ensure_vm_mcp_server(str(work_dir / "mcp" / "vm"))
+            servers["vm"] = StdioServerParameters(
+                command=node_path,
+                args=[os.path.join(vm_bridge_dir, "src", "index.js")],
+                env={**os.environ, **vm_bridge_env(self.executor)},
+            )
+            if cfg.gui_transport == "mcp":
+                cua_bridge_dir = await ensure_cua_mcp_server_at(str(work_dir / "mcp" / "cua"))
+                servers["cua"] = StdioServerParameters(
+                    command=node_path,
+                    args=[os.path.join(cua_bridge_dir, "src", "index.js")],
+                    env={**os.environ, **cua_bridge_env(self.executor)},
+                )
+            mcp_runtime = MCPRuntime(servers)
+            logger.info(
+                "ale-claw: substrate_transport=mcp gui_transport=%s (servers=%s)",
+                cfg.gui_transport, sorted(servers),
+            )
 
         # ---- 2. Memory + session + subagent registry ----
         memory_store = MemoryStore(task_id=task_id, base_dir=str(memory_base))
@@ -197,17 +239,19 @@ class AleClawDeployer(BaseAgentDeployer):
         # ---- 4. Thinking config ----
         thinking_config = self._build_thinking_config()
         thinking_api_params = thinking_config.to_api_params(cfg.model)
-        gui_model = cfg.gui_model or cfg.auxiliary_model or cfg.model
-        gui_thinking_params = thinking_config.gui_params(gui_model)
+        gui_thinking_params = thinking_config.gui_params(cfg.gui_model or cfg.model)
 
         # ---- 5. Pre-build computer handler ----
+        # gui_transport=mcp → drive GUI through the cua bridge; else the session
+        # handler. The MCP handler inits lazily (the runtime connects later,
+        # around the drive loop), so don't _initialize it here.
         # Pointer coordinate space — most models emit screen pixels, but the
         # Gemini family grounds clicks to a normalized [0, 1000) grid. Detect
         # from the model that actually drives the handler (gui_model when the
         # main agent has no computer), unless the config forces a space.
         from .harness.tools.computer_handler import coordinate_space_for_model
         coord_driver_model = (
-            gui_model
+            (cfg.gui_model or cfg.model)
             if cfg.disable_main_computer
             else cfg.model
         )
@@ -221,10 +265,16 @@ class AleClawDeployer(BaseAgentDeployer):
 
         computer_handler = None
         if not cfg.disable_main_computer:
-            computer_handler = OpenClawComputerHandler(
-                session.computer, coordinate_space=coordinate_space
-            )
-            await computer_handler._initialize()            # noqa: SLF001
+            if cfg.gui_transport == "mcp" and mcp_runtime is not None:
+                from .harness.tools.computer_handler import MCPComputerHandler
+                computer_handler = MCPComputerHandler(
+                    mcp_runtime, os_type=sb.os, coordinate_space=coordinate_space
+                )
+            else:
+                computer_handler = OpenClawComputerHandler(
+                    session.computer, coordinate_space=coordinate_space
+                )
+                await computer_handler._initialize()            # noqa: SLF001
 
         # ---- 6. Tools + disabled_tools filter ----
         tools = build_tools(
@@ -238,18 +288,15 @@ class AleClawDeployer(BaseAgentDeployer):
             default_model=cfg.model,
             auxiliary_model=cfg.auxiliary_model,
             thinking_params=thinking_api_params,
-            thinking_config=thinking_config,
             gui_thinking_params=gui_thinking_params,
-            generation_kwargs=cfg.extra_generation_kwargs,
             disable_main_computer=cfg.disable_main_computer,
             disable_delegate_gui=cfg.disable_delegate_gui,
-            gui_model=gui_model,
+            gui_model=cfg.gui_model,
             workspace_root=workspace_root,
             host_workspace_root=host_workspace_root,
             context_window_tokens=context_window_tokens,
             computer_handler=computer_handler,
-            api_key=cfg.api_key,
-            api_base=cfg.base_url,
+            mcp_runtime=mcp_runtime,
         )
         if cfg.disabled_tools:
             tools = [t for t in tools if getattr(t, "name", "") not in cfg.disabled_tools]
@@ -326,15 +373,25 @@ class AleClawDeployer(BaseAgentDeployer):
         # budget propagates cleanly (no subprocess to reap).
         # litellm reads OPENROUTER_API_KEY / ANTHROPIC_API_KEY etc straight
         # from os.environ — operator populates the shell, no patching needed.
-        max_steps = cfg.max_turns
+        max_steps = cfg.max_turns or 100
+        total_usage = {
+            "input_tokens": 0, "output_tokens": 0,
+            "total_tokens": 0, "response_cost": 0.0,
+        }
         t0 = time.monotonic()
         step = 0
         task_completed = False
         transcript_path = work_dir / "openclaw_sessions" / task_id / "transcript.jsonl"
-        from .harness.model.usage import start_helper_usage, stop_helper_usage
-        usage_token = start_helper_usage(work_dir / "helper_usage.jsonl")
 
+        # Connect the MCP bridge(s) for the duration of the drive loop and tear
+        # them down (terminating the node children) on any exit — success,
+        # exception, or wall-budget cancellation. A startup failure here is
+        # caught by the except below and surfaced as a failed run.
+        mcp_stack = AsyncExitStack()
         try:
+            if mcp_runtime is not None:
+                await mcp_stack.enter_async_context(mcp_runtime)
+
             async def _drive() -> None:
                 nonlocal step, task_completed
                 # cfg.base_url / cfg.api_key (custom OpenAI-compatible gateway,
@@ -342,14 +399,24 @@ class AleClawDeployer(BaseAgentDeployer):
                 # litellm as api_base/api_key kwargs — no os.environ mutation.
                 async for result in agent.run(
                     run_input, api_base=cfg.base_url, api_key=cfg.api_key,
-                    max_turns=max_steps,
                     **cfg.extra_generation_kwargs,
                 ):
                     sys.stdout.flush()
                     step += 1
+                    for k in total_usage:
+                        total_usage[k] += result["usage"].get(k, 0)
+                    session_mgr.update_step_count(step)
+                    session_mgr.update_tokens(
+                        result["usage"].get("input_tokens", 0),
+                        result["usage"].get("output_tokens", 0),
+                    )
+                    if step >= max_steps:
+                        logger.info("ale-claw: max_steps %d reached", max_steps)
+                        break
                     if has_done_signal(result.get("output", [])):
                         logger.info("ale-claw: done signal at step %d", step)
                         task_completed = True
+                        break
             await _drive()
         except Exception as exc:                             # noqa: BLE001
             logger.exception("ale-claw: agent.run threw")
@@ -360,17 +427,15 @@ class AleClawDeployer(BaseAgentDeployer):
                 transcript_path=str(transcript_path) if transcript_path.exists() else None,
             )
         finally:
-            try:
-                await registry.close()
-            finally:
-                stop_helper_usage(usage_token)
+            await mcp_stack.aclose()
+
         # Outcome mapping
         if task_completed:
             status = "completed"
             error: str | None = None
-        elif max_steps is not None and step >= max_steps:
-            status = "failed"
-            error = f"max_turns {max_steps} reached before DONE"
+        elif step >= max_steps:
+            status = "completed"     # finished at step budget — not a wall-clock failure
+            error = None
         else:
             status = "failed"
             error = "loop exited without done signal"
@@ -435,6 +500,5 @@ class AleClawDeployer(BaseAgentDeployer):
         return ThinkingConfig(
             level=level, flush_level=flush, compaction_level=compact,
             vision_level=vision, gui_level=gui,
-            flush_level_overridden=c.flush_thinking_level is not None,
-            compaction_level_overridden=c.compaction_thinking_level is not None,
         )
+

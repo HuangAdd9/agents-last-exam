@@ -19,8 +19,8 @@ Why ship a local ``_normalize_key``:
 
 Convention used here:
     - String input (``"ctrl+shift+s"`` or legacy ``"ctrl-shift-s"``) → chord.
-    - Lists containing a modifier (``["ctrl", "c"]``) → chord.
-    - Other lists (``["right","right","down"]``) → independent presses.
+    - List input (``["right","right","down"]``) → sequence of independent
+      presses, in order.
     - Single-element list (``["enter"]``) → ``press_key`` (unchanged).
 
 Why coerce pointer coordinates:
@@ -53,10 +53,13 @@ Why scale normalized coordinates:
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 from agent.computers.cua import cuaComputerHandler
 from agent.types import ToolError
+
+if TYPE_CHECKING:
+    from .mcp_runtime import MCPRuntime
 
 
 _KEY_MAPPING = {
@@ -163,16 +166,11 @@ class _PointerCoords:
 
     async def _scale_xy(self, x: int, y: int) -> Tuple[int, int]:
         """Map (x, y) to pixel space when the model emits normalized coords."""
-        w, h = await self.get_dimensions()
-        if self._coord_space == "normalized":
-            px = round(x / NORMALIZED_GRID * w)
-            py = round(y / NORMALIZED_GRID * h)
-        elif self._image_dimensions:
-            image_w, image_h = self._image_dimensions
-            px = round(x * w / image_w)
-            py = round(y * h / image_h)
-        else:
+        if self._coord_space != "normalized":
             return x, y
+        w, h = await self.get_dimensions()
+        px = round(x / NORMALIZED_GRID * w)
+        py = round(y / NORMALIZED_GRID * h)
         return max(0, min(w - 1, px)), max(0, min(h - 1, py))
 
     async def _pointer_xy(self, action: str, x: Any, y: Any) -> Tuple[int, int]:
@@ -184,7 +182,7 @@ class _PointerCoords:
         self, path: List[Dict[str, int]]
     ) -> List[Dict[str, int]]:
         """Scale every point of a drag ``path`` when coords are normalized."""
-        if self._coord_space != "normalized" and not self._image_dimensions:
+        if self._coord_space != "normalized":
             return path
         scaled: List[Dict[str, int]] = []
         for pt in path:
@@ -205,29 +203,6 @@ class OpenClawComputerHandler(_PointerCoords, cuaComputerHandler):
     ) -> None:
         super().__init__(cua_computer)
         self._coord_space = coordinate_space
-        self._image_dimensions: tuple[int, int] | None = None
-
-    async def get_model_dimensions(self) -> tuple[int, int]:
-        if self._image_dimensions:
-            return self._image_dimensions
-        width, height = await self.get_dimensions()
-        scale = min(1.0, 1200 / max(width, height))
-        return max(1, round(width * scale)), max(1, round(height * scale))
-
-    def set_screenshot_dimensions(self, width: int, height: int) -> None:
-        self._image_dimensions = (width, height)
-
-    async def get_environment(self) -> str:
-        os_type = getattr(self.cua_computer, "os_type", "")
-        if isinstance(os_type, str):
-            os_type = os_type.lower()
-            if os_type.startswith("win"):
-                return "windows"
-            if os_type.startswith(("mac", "darwin")):
-                return "mac"
-            if os_type.startswith(("linux", "ubuntu")):
-                return "linux"
-        return await super().get_environment()
 
     def _normalize_key(self, key: str) -> str:
         parent = getattr(super(), "_normalize_key", None)
@@ -239,10 +214,6 @@ class OpenClawComputerHandler(_PointerCoords, cuaComputerHandler):
         assert self.interface is not None
         if isinstance(keys, str):
             await super().keypress(keys)
-            return
-        modifiers = {"ctrl", "control", "alt", "shift", "meta", "cmd", "command", "super", "win"}
-        if len(keys) > 1 and any(key.lower() in modifiers for key in keys):
-            await self.interface.hotkey(*(self._normalize_key(key) for key in keys))
             return
         for k in keys:
             await self.interface.press_key(self._normalize_key(k))
@@ -285,3 +256,189 @@ class OpenClawComputerHandler(_PointerCoords, cuaComputerHandler):
         sx, sy = await self._pointer_xy("drag (start)", start_x, start_y)
         ex, ey = await self._pointer_xy("drag (end)", end_x, end_y)
         await super().drag(start_x=sx, start_y=sy, end_x=ex, end_y=ey)
+
+
+def _normalize_key(key: str) -> str:
+    """Map LLM-style key names to the form the cua bridge expects.
+
+    The bridge does its own normalization too; this only smooths the arrow-key
+    aliases the harness has always handled and lowercases the rest.
+    """
+    return _KEY_MAPPING.get(key.upper(), key.lower())
+
+
+class MCPComputerHandler(_PointerCoords):
+    """GUI computer handler that drives the VM through the cua MCP bridge.
+
+    Implements the ``AsyncComputerHandler`` protocol (a ``runtime_checkable``
+    Protocol — only method *names* are checked), so it drops into ``build_tools``
+    as the ``computer`` tool in place of :class:`OpenClawComputerHandler` when GUI
+    is routed over MCP (Phase 2). Every action becomes a cua-bridge tool call;
+    the harness no longer touches ``RemoteDesktopSession`` for GUI.
+
+    Coordinates: the model emits **pixel** coords in screenshot space (or, for
+    ``coordinate_space="normalized"`` models like Gemini, a [0, 1000) grid that
+    :class:`_PointerCoords` first rescales to pixels), but the cua bridge speaks
+    **normalized [0, 1000]**. We convert px→[0,1000] here using the screen size
+    (fetched once via the bridge's ``get_screen_size`` tool); the bridge converts
+    back to pixels. Rounding is ≤ 1px at typical resolutions.
+
+    Keypress keeps the harness's chord-vs-sequence rule (mirrors
+    :class:`OpenClawComputerHandler`): a list is a *sequence* of independent
+    presses (one ``key`` call each), a ``+``/``-`` string is a *chord*.
+    """
+
+    def __init__(
+        self,
+        runtime: "MCPRuntime",
+        *,
+        os_type: Optional[str] = None,
+        coordinate_space: str = "pixel",
+    ) -> None:
+        self._runtime = runtime
+        self._os_type = (os_type or "").lower()
+        self._dims: Optional[Tuple[int, int]] = None
+        self._coord_space = coordinate_space
+        # Present for parity with cua handlers that expose ``.interface``; the
+        # MCP path has no direct interface object.
+        self.interface = None
+
+    async def _initialize(self) -> None:
+        await self._dimensions()
+
+    # -- helpers --
+
+    async def _call_cua(self, tool: str, args: dict):
+        """Call a cua bridge tool, mapping tool failures to ``ToolError``.
+
+        A GUI op can fail for recoverable, environment-dependent reasons (e.g.
+        the desktop is locked, a window isn't focused). The harness loop turns
+        ``ToolError`` into a ``function_call_output`` the model sees next turn, so
+        the run adapts instead of crashing — matching the session handler's
+        semantics. Without this, the raw ``MCPToolError`` (a ``RuntimeError``)
+        would propagate and abort the episode.
+        """
+        from .mcp_runtime import MCPToolError
+        try:
+            return await self._runtime.call("cua", tool, args)
+        except MCPToolError as e:
+            raise ToolError(str(e)) from e
+
+    async def _dimensions(self) -> Tuple[int, int]:
+        if self._dims is None:
+            res = await self._call_cua("get_screen_size", {})
+            sc = res.structuredContent or {}
+            self._dims = (int(sc["width"]), int(sc["height"]))
+        return self._dims
+
+    async def _to_norm(self, x: int, y: int) -> List[int]:
+        w, h = await self._dimensions()
+        nx = 0 if w <= 0 else round(x / w * 1000)
+        ny = 0 if h <= 0 else round(y / h * 1000)
+        return [max(0, min(1000, nx)), max(0, min(1000, ny))]
+
+    # -- observation --
+
+    async def get_environment(self) -> str:
+        if self._os_type.startswith("win"):
+            return "windows"
+        if self._os_type.startswith("mac") or self._os_type.startswith("darwin"):
+            return "mac"
+        return "linux"
+
+    async def get_dimensions(self) -> Tuple[int, int]:
+        return await self._dimensions()
+
+    async def screenshot(self, text: Optional[str] = None) -> str:
+        res = await self._call_cua("screenshot", {})
+        for block in res.content:
+            if getattr(block, "type", None) == "image":
+                return block.data  # base64 str
+        raise ToolError("cua screenshot returned no image content")
+
+    async def get_current_url(self) -> str:
+        return ""  # no browser-URL primitive over the cua bridge
+
+    # -- pointer --
+
+    async def click(self, x: Any, y: Any = None, button: str = "left") -> None:
+        nx, ny = await self._pointer_xy("click", x, y)
+        await self._call_cua("click", {"coordinate": await self._to_norm(nx, ny), "button": button})
+
+    async def double_click(self, x: Any, y: Any = None) -> None:
+        nx, ny = await self._pointer_xy("double_click", x, y)
+        await self._call_cua("click", {"coordinate": await self._to_norm(nx, ny), "clicks": 2})
+
+    async def right_click(self, x: Any, y: Any = None) -> None:
+        nx, ny = await self._pointer_xy("right_click", x, y)
+        await self._call_cua("click", {"coordinate": await self._to_norm(nx, ny), "button": "right"})
+
+    async def move(self, x: Any, y: Any = None) -> None:
+        nx, ny = await self._pointer_xy("move", x, y)
+        await self._call_cua("mouse_move", {"coordinate": await self._to_norm(nx, ny)})
+
+    async def scroll(self, x: Any, y: Any = None, scroll_x: Any = 0, scroll_y: Any = 0) -> None:
+        nx, ny = await self._pointer_xy("scroll", x, y)
+        coord = await self._to_norm(nx, ny)
+        sx = _coerce_int(scroll_x) or 0
+        sy = _coerce_int(scroll_y) or 0
+        if sy:
+            await self._call_cua("scroll", {
+                "direction": "down" if sy > 0 else "up", "amount": abs(sy), "coordinate": coord})
+        if sx:
+            await self._call_cua("scroll", {
+                "direction": "right" if sx > 0 else "left", "amount": abs(sx), "coordinate": coord})
+
+    async def drag(
+        self,
+        path: Optional[List[Dict[str, int]]] = None,
+        start_x: Any = None,
+        start_y: Any = None,
+        end_x: Any = None,
+        end_y: Any = None,
+    ) -> None:
+        if path:
+            path = await self._scale_path(path)
+            sx, sy = path[0]["x"], path[0]["y"]
+            ex, ey = path[-1]["x"], path[-1]["y"]
+        else:
+            sx, sy = await self._pointer_xy("drag (start)", start_x, start_y)
+            ex, ey = await self._pointer_xy("drag (end)", end_x, end_y)
+        await self._call_cua("drag", {
+            "start_coordinate": await self._to_norm(sx, sy),
+            "coordinate": await self._to_norm(ex, ey),
+            "button": "left",
+        })
+
+    async def left_mouse_down(self, x: Any = None, y: Any = None) -> None:
+        if x is not None and y is not None:
+            await self.move(x, y)
+        await self._call_cua("mouse_down", {"button": "left"})
+
+    async def left_mouse_up(self, x: Any = None, y: Any = None) -> None:
+        if x is not None and y is not None:
+            await self.move(x, y)
+        await self._call_cua("mouse_up", {"button": "left"})
+
+    # -- keyboard --
+
+    async def type(self, text: str) -> None:
+        await self._call_cua("type", {"text": text})
+
+    async def keypress(self, keys: Union[List[str], str]) -> None:
+        if isinstance(keys, str):
+            # chord: split "ctrl+shift+s" / legacy "ctrl-shift-s"
+            parts = [p for p in keys.replace("-", "+").split("+") if p] or [keys]
+            await self._call_cua("key", {"keys": [_normalize_key(k) for k in parts]})
+            return
+        # list: sequence of independent presses, in order
+        for k in keys:
+            await self._call_cua("key", {"keys": [_normalize_key(k)]})
+
+    async def wait(self, ms: int = 1000) -> None:
+        await self._call_cua("wait", {"duration": (ms or 0) / 1000})
+
+    # -- misc --
+
+    async def terminate(self, status: str = "success") -> Dict[str, Any]:
+        return {"status": status}
