@@ -1,0 +1,98 @@
+runtime_image=ale/base-visual-media:20260918-1
+Blender 4.0.2
+Python 3.12.3
+{
+  "reference_output": {
+    "appearance": 1.0,
+    "appearance_detail": {
+      "appearance": 1.0,
+      "channel_scores": [
+        [
+          1,
+          1,
+          1,
+          1
+        ],
+        [
+          1,
+          1,
+          1,
+          1
+        ],
+        [
+          1,
+          1,
+          1,
+          1
+        ]
+      ],
+      "views": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    "candidate_attributes": [
+      "NORMAL",
+      "POSITION",
+      "TEXCOORD_0"
+    ],
+    "candidate_images": 4,
+    "geometry": 1.0,
+    "material": 1.0,
+    "material_params": 1.0,
+    "reference_images": 4,
+    "resources": 1.0,
+    "scene": 1.0,
+    "score": 1.0,
+    "texture": 1.0,
+    "uv": 1.0,
+    "validation_errors": 0
+  },
+  "starter_output": {
+    "appearance": 0.0,
+    "appearance_detail": {
+      "appearance": 1.0,
+      "channel_scores": [
+        [
+          1,
+          1,
+          1,
+          1
+        ],
+        [
+          1,
+          1,
+          1,
+          1
+        ],
+        [
+          1,
+          1,
+          1,
+          1
+        ]
+      ],
+      "views": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    "candidate_attributes": [
+      "NORMAL",
+      "POSITION"
+    ],
+    "candidate_images": 0,
+    "geometry": 1.0,
+    "material": 0.0,
+    "material_params": 0.0,
+    "reference_images": 4,
+    "resources": 0.0,
+    "scene": 1.0,
+    "score": 0.35,
+    "texture": 0.0,
+    "uv": 0.0,
+    "validation_errors": 0
+  }
+}

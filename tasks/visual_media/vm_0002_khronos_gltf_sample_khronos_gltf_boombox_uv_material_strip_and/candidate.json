@@ -1,0 +1,13 @@
+{
+  "candidate_id": "vm_0002_khronos_gltf_sample_khronos_gltf_boombox_uv_material_strip_and",
+  "task_id": "visual_media/vm_0002_khronos_gltf_sample_khronos_gltf_boombox_uv_material_strip_and",
+  "task_name": "vm_0002_khronos_gltf_sample_khronos_gltf_boombox_uv_material_strip_and",
+  "seed_id": "khronos-gltf-boombox",
+  "idea_id": "khronos-gltf-boombox__uv_material_strip_and_restore__2",
+  "source_family": "khronos_gltf_sample_assets",
+  "archetype": "uv_material_strip_and_restore",
+  "runtime_alias": "visual-media",
+  "runtime_image": "ale/base-visual-media:20260918-1",
+  "runtime_image_id": "sha256:b7963c044c911ee4adf6efc80aa2d8bb237ea9d0da7c2375dc9baa89bd154081",
+  "status": "ready"
+}

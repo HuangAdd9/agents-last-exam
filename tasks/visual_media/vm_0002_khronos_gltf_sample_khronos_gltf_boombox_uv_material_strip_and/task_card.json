@@ -1,0 +1,52 @@
+{
+  "taskId": "visual_media/vm_0002_khronos_gltf_sample_khronos_gltf_boombox_uv_material_strip_and",
+  "title": "Restore the Boom Box UVs and textured material",
+  "summary": "Repair a real Khronos Boom Box GLB after its UV and material links were stripped, preserving geometry and appearance across hidden views.",
+  "category": "visual_media",
+  "software": [
+    "Blender",
+    "Python 3",
+    "glTF 2.0 tools"
+  ],
+  "taxonomy": {
+    "domain_id": "8",
+    "domain_code": "visual_media",
+    "subdomain_id": "8.1",
+    "subdomain_code": "animation_3d",
+    "subdomain_name": "3D, Animation & Interactive Media"
+  },
+  "taskPrompt": "Open input/boombox_stripped.glb in Blender and restore the Boom Box's UV mapping, material, and embedded texture resources. Use input/appearance_target.png as an appearance target while preserving the input mesh's positions, normals, indices, object transform, and overall scale. Additional fixed views are used during grading, so restore the actual asset rather than making a camera-specific cheat. Export exactly one self-contained glTF 2.0 binary named output/boombox_repaired.glb. Do not modify input files or leave external texture paths.",
+  "agentMustDo": [
+    "Inspect the stripped GLB and the supplied appearance reference.",
+    "Preserve the mesh geometry and transform while adding a valid UV layer.",
+    "Recreate the material and pack or embed all textures used by the material.",
+    "Export a self-contained boombox_repaired.glb under output/"
+  ],
+  "inputFiles": [
+    {
+      "path": "input/boombox_stripped.glb",
+      "description": "Khronos Boom Box GLB with geometry intact and UV/material links deliberately removed."
+    },
+    {
+      "path": "input/appearance_target.png",
+      "description": "Agent-visible reference render from the complete mother asset."
+    },
+    {
+      "path": "input/TASK_SPEC.md",
+      "description": "Repair contract and submission requirements."
+    }
+  ],
+  "deliverables": [
+    {
+      "path": "output/boombox_repaired.glb",
+      "description": "Self-contained repaired glTF 2.0 binary with valid UVs, material, and textures."
+    }
+  ],
+  "evaluation": "The grader strictly parses the submitted GLB and a canonical comparison GLB, validating chunk/accessor bounds, scene and node-transform consistency, preservation of POSITION/NORMAL/index geometry, non-degenerate normalized UVs, material assignment and effective core material factors (including glTF defaults), and actual material-texture-image reachability for embedded CRC-valid PNGs. Geometry, UV, material, resource, and appearance components receive separate partial credit; exact UV coordinates and byte-identical PNG encoding are not required. Both assets are imported in the pinned Blender runtime and compared from three fixed camera/light views using all rendered RGBA channels, rewarding a real textured Boom Box rather than a single-view or unreferenced-resource approximation.",
+  "vm": {
+    "machineType": "c4-standard-4",
+    "snapshot": "cpu-free-ubuntu",
+    "timeout": 3600
+  },
+  "requiredSystemPackages": []
+}

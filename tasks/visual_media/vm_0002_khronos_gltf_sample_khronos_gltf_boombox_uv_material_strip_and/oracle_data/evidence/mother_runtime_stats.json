@@ -1,0 +1,63 @@
+{
+  "blender": "4.0.2",
+  "bounds": {
+    "max": [
+      0.009921154007315636,
+      0.010076245293021202,
+      0.00977163016796112
+    ],
+    "min": [
+      -0.009921154007315636,
+      -0.010076245293021202,
+      -0.00977163016796112
+    ]
+  },
+  "imported": {
+    "material_slots": 1,
+    "materials": [
+      "BoomBox_Mat"
+    ],
+    "meshes": 1,
+    "objects": 1,
+    "polygon_index_count": 18108,
+    "uv_layers": 1,
+    "vertices": 3575
+  },
+  "input": "/work/materialized/source/glTF-Binary/BoomBox.glb",
+  "outputs": {
+    "intact.glb": 10557732,
+    "intact.png": 215082,
+    "master.blend": 11932986,
+    "master.blend1": 11932986,
+    "restored.blend": 11907474,
+    "restored.blend1": 11907474,
+    "restored.glb": 10557732,
+    "restored.png": 215082,
+    "runtime_stats.json": 1334,
+    "stripped.blend": 11716096,
+    "stripped.blend1": 11716096,
+    "stripped.glb": 123356,
+    "stripped.png": 146066,
+    "workbench.png": 147121
+  },
+  "restored": {
+    "material_slots": 1,
+    "materials": [
+      "BoomBox_Mat"
+    ],
+    "meshes": 1,
+    "objects": 1,
+    "polygon_index_count": 18108,
+    "uv_layers": 1,
+    "vertices": 3575
+  },
+  "stripped": {
+    "material_slots": 0,
+    "materials": [],
+    "meshes": 1,
+    "objects": 1,
+    "polygon_index_count": 18108,
+    "uv_layers": 0,
+    "vertices": 3575
+  }
+}
