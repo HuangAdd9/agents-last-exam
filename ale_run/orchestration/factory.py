@@ -49,6 +49,8 @@ _AGENT_FQNS: dict[str, str] = {
     "pi_cli": "ale_run.agents.pi_cli.deployer.PiCliDeployer",
     "qwen_code": "ale_run.agents.qwen_code.deployer.QwenCodeDeployer",
     "zcode": "ale_run.agents.zcode.deployer.ZCodeDeployer",
+    "deepseek_harness": "ale_run.agents.deepseek_harness.deployer.DeepSeekHarnessDeployer",
+    "scripted_demo": "ale_run.agents.scripted_demo.deployer.ScriptedDemoDeployer",
     "dummy": "ale_run.agents.dummy.deployer.DummyDeployer",
 }
 
@@ -102,7 +104,7 @@ def _config_class_for(deployer_cls: type) -> type:
     return cls
 
 
-def resolve_agent(spec: "AgentSpec") -> tuple[type, type]:
+def resolve_agent(spec: AgentSpec) -> tuple[type, type]:
     """Resolve an AgentSpec to ``(deployer_cls, config_cls)``.
 
     Raises if ``spec.class_`` isn't registered AND isn't an importable FQN.
@@ -172,7 +174,7 @@ def build_config(config_cls: type, raw: dict[str, Any]) -> Any:
 # ----------------------------------------------------------------------
 
 
-def build_provider(spec: "ProviderSpec") -> "Provider":
+def build_provider(spec: ProviderSpec) -> Provider:
     """Build a Provider instance from a ProviderSpec."""
     kind = spec.kind
     if kind == "gcloud":
@@ -193,6 +195,9 @@ def build_provider(spec: "ProviderSpec") -> "Provider":
     if kind == "qemu":
         from ..environments.providers.qemu import QemuProvider
         return QemuProvider(spec.config)
+    if kind == "proxmox":
+        from ..environments.providers.proxmox import ProxmoxProvider
+        return ProxmoxProvider(spec.config)
     raise NotImplementedError(f"provider kind {kind!r} is not implemented")
 
 
@@ -205,9 +210,9 @@ class EnvironmentRouter:
     safely serves all its snapshots concurrently).
     """
 
-    def __init__(self, env: "EnvironmentSpec"):
+    def __init__(self, env: EnvironmentSpec):
         self._env = env
-        self._cache: dict[tuple[object, ...], "Provider"] = {}
+        self._cache: dict[tuple[object, ...], Provider] = {}
 
     def provider_for(
         self,
@@ -215,7 +220,7 @@ class EnvironmentRouter:
         *,
         image_ref: str | None = None,
         image_revision: str | None = None,
-    ) -> "Provider":
+    ) -> Provider:
         # A distributed task manifest may pin a private Docker image while
         # the task card still names a logical snapshot.  Use Docker as the
         # fallback provider only when such an override is present; cloud and

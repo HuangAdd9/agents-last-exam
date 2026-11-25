@@ -30,7 +30,11 @@ def test_resource_limits_use_numeric_inspect_values(
 
     limits = asyncio.run(docker._get_resource_limits("sandbox-name"))
 
-    assert limits == {"cpu_quota": cpu_quota, "memory_limit_bytes": memory_bytes}
+    assert limits == {
+        "cpu_quota": cpu_quota,
+        "memory_limit_bytes": memory_bytes,
+        "memory_and_swap_limit_bytes": 0,
+    }
     assert isinstance(limits["cpu_quota"], float)
     assert isinstance(limits["memory_limit_bytes"], int)
     commands.assert_awaited_once_with(

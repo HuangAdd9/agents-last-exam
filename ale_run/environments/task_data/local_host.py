@@ -32,12 +32,13 @@ from pathlib import Path
 from typing import Any
 
 from ...base_interface import SandboxHandle, TaskDataSpec
-from . import join, shell_q, task_subdir
+from . import join, prepare_task_subdir, shell_q, task_subdir
 
 logger = logging.getLogger(__name__)
 
 _PREFIX = "local:"
 _PROXMOX_UPLOAD_CHUNK_BYTES = 4 * 1024 * 1024
+_STATIC_UPLOAD_CHUNK_BYTES = 512 * 1024
 
 
 def _host_task_dir(source: str, task_data: TaskDataSpec) -> str:
@@ -51,19 +52,33 @@ def _host_task_dir(source: str, task_data: TaskDataSpec) -> str:
     )
 
 
-async def _docker_cp(src: str, container: str, dst: str) -> None:
+async def _docker_cp(src: str, sandbox: SandboxHandle, dst: str) -> None:
     proc = await asyncio.create_subprocess_exec(
-        "docker",
-        "cp",
-        src,
-        f"{container}:{dst}",
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
+        "docker", "cp", src, f"{sandbox.id}:{dst}",
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
     )
     _, err = await proc.communicate()
     if proc.returncode != 0:
         raise RuntimeError(
-            f"docker cp {src} -> {container}:{dst} failed "
+            f"docker cp {src} -> {sandbox.id}:{dst} failed "
+            f"(rc={proc.returncode}): {err.decode(errors='replace')[:300]}"
+        )
+    owner = []
+    for flag in ("-u", "-g"):
+        result = await sandbox.run_command(f"id {flag}")
+        value = (result.stdout or "").strip()
+        if result.returncode or not value.isascii() or not value.isdecimal():
+            raise RuntimeError("Could not determine task-data user/group in Docker sandbox")
+        owner.append(value)
+    proc = await asyncio.create_subprocess_exec(
+        "docker", "exec", "--user", "0", sandbox.id,
+        "chown", "-R", "-h", "--", ":".join(owner), dst,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    )
+    _, err = await proc.communicate()
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"docker task-data ownership repair failed for {sandbox.id}:{dst} "
             f"(rc={proc.returncode}): {err.decode(errors='replace')[:300]}"
         )
 
@@ -97,7 +112,12 @@ async def _proxmox_copy_dirs(
 
             part_count = 0
             with archive.open("rb") as stream:
-                while chunk := stream.read(_PROXMOX_UPLOAD_CHUNK_BYTES):
+                chunk_size = (
+                    _STATIC_UPLOAD_CHUNK_BYTES
+                    if sandbox.metadata.get("provider") == "static"
+                    else _PROXMOX_UPLOAD_CHUNK_BYTES
+                )
+                while chunk := stream.read(chunk_size):
                     remote_part = join(
                         sandbox,
                         stage_dir,
@@ -189,7 +209,7 @@ async def stage_input(
             f"task_data_source=local: expected input/ at {host!r} on the host, "
             f"not found. Did you fetch the task data? (see the local-docker README)"
         )
-    base = task_subdir(sandbox, task_data)
+    base = await prepare_task_subdir(sandbox, task_data)
     in_dst = join(sandbox, base, "input")
     staged = ["input"]
     sw = os.path.join(host, "software")
@@ -202,7 +222,7 @@ async def stage_input(
         # ``docker cp <src>/. <dst>`` copies directory contents, whether or not
         # the destination already exists.
         await sandbox.mkdir(in_dst)
-        await _docker_cp(os.path.join(host, "input") + "/.", sandbox.id, in_dst)
+        await _docker_cp(os.path.join(host, "input") + "/.", sandbox, in_dst)
     else:
         # A Proxmox clone starts clean, but an attached static VM can contain
         # output/reference left by an earlier rollout. Remove both before the
@@ -227,13 +247,15 @@ async def stage_input(
         sw_dst = join(sandbox, base, "software")
         if provider == "docker":
             await sandbox.mkdir(sw_dst)
-            await _docker_cp(sw + "/.", sandbox.id, sw_dst)
+            await _docker_cp(sw + "/.", sandbox, sw_dst)
         if sandbox.is_linux:
-            await sandbox.run_command(
+            result = await sandbox.run_command(
                 f"find {shell_q(sandbox, join(sandbox, base, 'software'))} "
                 f"-type f -exec chmod +x {{}} +",
                 timeout=60,
             )
+            if result.returncode:
+                raise RuntimeError(f"Could not make staged software executable: {result.stderr}")
     logger.info("local: staged %s for %s from %s", staged, task_data.task_name, host)
     return {"staged": staged, "source": "local"}
 
@@ -276,10 +298,13 @@ async def stage_reference(
     # can reach this phase with no input staging (or after cleanup).  Create
     # both levels explicitly so staging is idempotent and never depends on a
     # stale container directory.
-    await _docker_mkdir(sandbox, base)
+    if provider == "docker":
+        await _docker_mkdir(sandbox, base)
+    else:
+        await sandbox.mkdir(base)
     await sandbox.rm([target])  # defend against stale reference from a prior run
     if provider == "docker":
-        await _docker_cp(ref, sandbox.id, target)
+        await _docker_cp(ref, sandbox, target)
     else:
         await _proxmox_copy_dirs(
             sandbox,

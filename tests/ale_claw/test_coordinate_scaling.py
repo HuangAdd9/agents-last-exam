@@ -4,8 +4,7 @@ Covers the Gemini "normalized [0, 1000) grid" fix:
   - coordinate_space_for_model() auto-detection
   - "pixel" space is an unscaled pass-through (default, back-compat)
   - "normalized" space rescales model coords to pixels via screen size
-  - both handlers (OpenClawComputerHandler + MCPComputerHandler) scale
-    click / drag (start-end and path) consistently
+  - the session handler scales click and drag actions consistently
 """
 
 import asyncio
@@ -15,7 +14,6 @@ import pytest
 
 from ale_run.agents.ale_claw.harness.tools.computer_handler import (
     NORMALIZED_GRID,
-    MCPComputerHandler,
     OpenClawComputerHandler,
     coordinate_space_for_model,
 )
@@ -133,53 +131,3 @@ def test_openclaw_normalized_drag_path(monkeypatch):
     assert seen["path"][0] == {"x": 0, "y": 0}
     assert seen["path"][-1]["x"] == _norm_to_px(500, SCREEN_W)
     assert seen["path"][-1]["y"] == _norm_to_px(500, SCREEN_H)
-
-
-# ---------------------------------------------------------------------------
-# MCPComputerHandler (bridge path — px→[0,1000] happens in _to_norm)
-# ---------------------------------------------------------------------------
-
-
-def _make_mcp_handler(coordinate_space):
-    handler = MCPComputerHandler(
-        MagicMock(), os_type="windows", coordinate_space=coordinate_space
-    )
-    handler._dims = (SCREEN_W, SCREEN_H)  # skip get_screen_size round-trip
-    handler._call_cua = AsyncMock()
-    return handler
-
-
-def test_mcp_pixel_click_norm_roundtrip():
-    handler = _make_mcp_handler("pixel")
-    # Pixel center → bridge-normalized ~500.
-    _run(handler.click(960, 540))
-    args = handler._call_cua.call_args
-    assert args[0][0] == "click"
-    coord = args[0][1]["coordinate"]
-    assert coord == [500, 500]
-
-
-def test_mcp_normalized_click_roundtrips_back():
-    handler = _make_mcp_handler("normalized")
-    # Model emits normalized (500, 500). Handler scales →px (960,540), then
-    # _to_norm converts back →[500,500] for the bridge. Net: identity.
-    _run(handler.click(500, 500))
-    coord = handler._call_cua.call_args[0][1]["coordinate"]
-    assert coord == [500, 500]
-
-
-def test_mcp_normalized_differs_from_pixel_for_offcenter():
-    """A raw normalized coord treated as pixels would land wrong; scaling fixes it."""
-    norm = _make_mcp_handler("normalized")
-    _run(norm.click(250, 250))
-    norm_coord = norm._call_cua.call_args[0][1]["coordinate"]
-    # Scaled: normalized 250 → pixel 480/270 → bridge norm back to ~250.
-    assert norm_coord == [250, 250]
-
-    pixel = _make_mcp_handler("pixel")
-    _run(pixel.click(250, 250))
-    pixel_coord = pixel._call_cua.call_args[0][1]["coordinate"]
-    # Treated as pixels: 250/1920*1000 ≈ 130 — the wrong place.
-    assert pixel_coord == [round(250 / SCREEN_W * 1000),
-                           round(250 / SCREEN_H * 1000)]
-    assert pixel_coord != norm_coord

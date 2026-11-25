@@ -20,15 +20,23 @@ Design adapted from OpenClaw:
 from __future__ import annotations
 
 import asyncio
+import base64
+import io
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from agent import ComputerAgent
 from agent.callbacks.base import AsyncCallbackHandler
+from agent.responses import make_tool_error_item
+from agent.types import ToolError
+from PIL import Image
 
+from ..agent_loop import OpenClawComputerAgent
+from ..agent_loop_helpers import _maybe_sanitize_screenshot
+from ..context.transcript import group_step_output
 from ..memory.memory import MemoryGetTool, MemorySearchTool, MemoryStore, MemoryWriteTool
 from ..tools.computer_handler import (
     OpenClawComputerHandler,
@@ -81,6 +89,59 @@ class SteerInboxCallback(AsyncCallbackHandler):
         return True
 
 
+class _TurnLimitCallback(AsyncCallbackHandler):
+    """Stop before the next model call, after the last turn's tools execute."""
+
+    def __init__(self, max_steps: int) -> None:
+        self.max_steps = max_steps
+        self.turns = 0
+        self.terminated = False
+
+    async def on_responses(self, kwargs: dict[str, Any], responses: dict[str, Any]) -> None:
+        self.turns += 1
+        self.terminated = _is_terminated(responses.get("output", []))
+
+    async def on_run_continue(self, kwargs: dict[str, Any], old_items: list[dict[str, Any]],
+                              new_items: list[dict[str, Any]]) -> bool:
+        return self.turns < self.max_steps and not self.terminated
+
+
+class _GUIComputerHandler(OpenClawComputerHandler):
+    async def screenshot(self, text: str | None = None) -> str:
+        raw = await super().screenshot(text=text)
+        resized, mime = _maybe_sanitize_screenshot(raw)
+        with Image.open(io.BytesIO(base64.b64decode(resized))) as image:
+            self.set_screenshot_dimensions(*image.size)
+            if mime != "image/png":
+                output = io.BytesIO()
+                image.save(output, format="PNG")
+                return base64.b64encode(output.getvalue()).decode("ascii")
+        return resized
+
+
+class _GUIAgent(ComputerAgent):
+    """Dispatch the function-form computer tool used by OpenRouter models."""
+
+    auto_screenshot = True
+    _dispatch_computer_function_call = OpenClawComputerAgent._dispatch_computer_function_call
+
+    async def _handle_item(self, item, computer=None, ignore_call_ids=None):
+        if item.get("type") != "function_call" or item.get("name") != "computer":
+            return await super()._handle_item(item, computer, ignore_call_ids)
+        call_id = item.get("call_id")
+        if ignore_call_ids and call_id in ignore_call_ids:
+            return []
+        try:
+            if computer is None:
+                raise ToolError("Computer handler is required")
+            await self._on_function_call_start(item)
+            result = await self._dispatch_computer_function_call(item, computer)
+            await self._on_function_call_end(item, result)
+            return result
+        except (ToolError, ValueError, TypeError) as exc:
+            return [make_tool_error_item(str(exc), call_id)]
+
+
 # ---------------------------------------------------------------------------
 # System prompt
 # ---------------------------------------------------------------------------
@@ -95,33 +156,18 @@ def _build_system_prompt() -> str:
 
     Reference: openclaw/src/agents/subagent-announce.ts:47-104
     """
-    return "\n".join([
-        "# GUI Subagent",
-        "",
-        "You are a **GUI automation subagent** spawned by the main agent to "
-        "perform a focused GUI task on a Windows VM.",
-        "",
-        "## Rules",
-        "1. **Observe before acting** — Read the screenshot carefully. "
-        "Check UI state before deciding your next action.",
-        "2. **Batch when predictable** — When the outcome of multiple "
-        "actions is predictable (e.g. pressing Space 10 times to dismiss "
-        "dialogs, or a known sequence of arrow keys for navigation), emit "
-        "them as multiple `computer` tool calls in a single turn. This is "
-        "faster and saves steps.",
-        "3. **Observe when uncertain** — When the next screen state matters "
-        "for deciding what to do (e.g. after clicking a button that opens "
-        "a new dialog), emit a single action and wait for the next "
-        "screenshot.",
-        "4. **Stay focused** — Do only the assigned task, no side quests.",
-        "5. **Record discoveries** — When you encounter useful information "
-        "during VM interaction (error messages, UI state, discovered paths), "
-        "use `memory_write` to record it. The main agent will see these "
-        "observations in shared memory.",
-        "6. **Complete and return** — When the task is visibly complete, "
-        "call `computer` with `action='done'` and a brief `summary`.",
-        "7. **Be ephemeral** — You will be terminated after returning.",
-    ])
+    return """# GUI Subagent
+
+You are a **GUI automation subagent** spawned by the main agent to perform a focused GUI task on the VM.
+
+## Rules
+1. **Observe before acting** — Read the screenshot carefully. Check UI state before deciding your next action.
+2. **Batch when predictable** — When the outcome of multiple actions is predictable (e.g. pressing Space 10 times to dismiss dialogs, or a known sequence of arrow keys for navigation), emit them as multiple `computer` tool calls in a single turn. This is faster and saves steps.
+3. **Observe when uncertain** — When the next screen state matters for deciding what to do (e.g. after clicking a button that opens a new dialog), emit a single action and wait for the next screenshot.
+4. **Stay focused** — Do only the assigned task, no side quests.
+5. **Record discoveries** — When you encounter useful information during VM interaction (error messages, UI state, discovered paths), use `memory_write` to record it. The main agent will see these observations in shared memory.
+6. **Complete and return** — When the task is visibly complete, call `computer` with `action='terminate'` and a brief summary.
+7. **Be ephemeral** — You will be terminated after returning."""
 
 
 # ---------------------------------------------------------------------------
@@ -243,14 +289,7 @@ def _accumulate_usage(
     usage: SubagentUsage, result_usage: Any,
 ) -> None:
     """Add tokens from a ComputerAgent result's usage to SubagentUsage."""
-    if result_usage is None:
-        return
-    if isinstance(result_usage, dict):
-        usage.input_tokens += int(result_usage.get("prompt_tokens", 0) or 0)
-        usage.output_tokens += int(result_usage.get("completion_tokens", 0) or 0)
-    else:
-        usage.input_tokens += int(getattr(result_usage, "prompt_tokens", 0) or 0)
-        usage.output_tokens += int(getattr(result_usage, "completion_tokens", 0) or 0)
+    usage.add(result_usage)
 
 
 # ---------------------------------------------------------------------------
@@ -261,13 +300,15 @@ def _accumulate_usage(
 class _TranscriptWriter:
     """Lightweight append-only JSONL writer for GUI subagent turns.
 
-    Each entry records one relay turn: the actions taken and the step number.
-    Screenshots are NOT stored (too large for JSONL); the transcript captures
-    the action sequence and model responses only.
+    Records assistant calls and tool outputs in the same format as the main
+    session. Screenshots are stored as separate trajectory media artifacts.
     """
 
     def __init__(self, transcript_path: Path | None) -> None:
         self._path = transcript_path
+        self._trajectory_dir = (
+            transcript_path.parents[4] / "trajectories" if transcript_path else None
+        )
 
     def _append(self, entry: dict[str, Any]) -> None:
         if self._path is None:
@@ -276,30 +317,13 @@ class _TranscriptWriter:
         with open(self._path, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry) + "\n")
 
-    def write_turn(
-        self,
-        step: int,
-        actions: list[str],
-        output_items: list[dict[str, Any]],
-        is_done: bool,
-    ) -> None:
-        ts = datetime.now(timezone.utc).isoformat()
-        tool_calls_raw: list[dict[str, Any]] = []
-        for item in output_items:
-            if item.get("type") == "function_call" and item.get("name") == "computer":
-                tool_calls_raw.append({
-                    "id": item.get("call_id", ""),
-                    "name": "computer",
-                    "arguments": item.get("arguments", ""),
-                })
-        self._append({
-            "type": "turn",
-            "step": step,
-            "timestamp": ts,
-            "actions": actions,
-            "is_done": is_done,
-            "tool_calls": tool_calls_raw or None,
-        })
+    def write_items(self, output_items: list[dict[str, Any]]) -> None:
+        ts = datetime.now(UTC).isoformat()
+        assistant, results = group_step_output(output_items, self._trajectory_dir)
+        for role, blocks in (("assistant", assistant), ("tool", results)):
+            if blocks:
+                self._append({"type": "message", "timestamp": ts,
+                              "message": {"role": role, "content": blocks}})
 
 
 # ---------------------------------------------------------------------------
@@ -312,11 +336,12 @@ async def _build_gui_agent(
     model: str,
     thinking_params: dict[str, Any] | None,
     memory_store: MemoryStore | None,
-    inbox: "asyncio.Queue[str]",
+    inbox: asyncio.Queue[str],
+    max_steps: int,
 ) -> ComputerAgent:
     """Construct the lightweight GUI ComputerAgent (computer tool + optional memory).
 
-    The raw ``session._computer`` is wrapped in an
+    The session's computer is wrapped in an
     :class:`OpenClawComputerHandler` so the subagent gets the same
     chord-vs-sequence keypress semantics, tolerant coordinate coercion, and —
     crucially for Gemini-family GUI models — normalized→pixel scaling as the
@@ -324,11 +349,11 @@ async def _build_gui_agent(
     since delegate_gui runs may pick a different model than the main agent.
     ``make_computer_handler`` returns an already-``AsyncComputerHandler`` as-is
     without initializing it, so we ``_initialize`` here (idempotent)."""
-    computer = OpenClawComputerHandler(
-        session._computer,
+    computer = _GUIComputerHandler(
+        session.computer,
         coordinate_space=coordinate_space_for_model(model),
     )
-    await computer._initialize()            # noqa: SLF001
+    await computer._initialize()
     tools: list[Any] = [computer]
     if memory_store is not None:
         tools.extend([
@@ -336,13 +361,13 @@ async def _build_gui_agent(
             MemoryGetTool(memory_store),
             MemoryWriteTool(memory_store),
         ])
-    return ComputerAgent(
+    return _GUIAgent(
         model=model,
         tools=tools,
         instructions=_build_system_prompt(),
         only_n_most_recent_images=DEFAULT_IMAGE_HISTORY,
         telemetry_enabled=False,
-        callbacks=[SteerInboxCallback(inbox)],
+        callbacks=[SteerInboxCallback(inbox), _TurnLimitCallback(max_steps)],
         **(thinking_params or {}),
     )
 
@@ -353,7 +378,8 @@ async def _relay_until_done(
     run_id: str,
     max_steps: int,
     usage: SubagentUsage,
-    transcript: "_TranscriptWriter",
+    transcript: _TranscriptWriter,
+    credentials: dict[str, str] | None = None,
 ) -> str:
     """Drive ``ComputerAgent.run()``, recording turns/usage, and return the summary.
 
@@ -361,9 +387,11 @@ async def _relay_until_done(
     """
     step = 0
     terminated = False
+    terminate_ids: set[str] = set()
+    termination_failed = False
     last_text = ""
 
-    async for result in agent.run(instruction):
+    async for result in agent.run(instruction, **(credentials or {})):
         output_items = result.get("output", [])
         _accumulate_usage(usage, result.get("usage"))
 
@@ -371,25 +399,39 @@ async def _relay_until_done(
         text = _extract_text(output_items)
         if text:
             last_text = text
-        is_done = _is_terminated(output_items)
+        for item in output_items:
+            if item.get("type") == "function_call" and item.get("name") == "computer":
+                try:
+                    action = json.loads(item.get("arguments", "{}"))
+                except (ValueError, TypeError):
+                    continue
+                if action.get("action") == "terminate":
+                    terminate_ids.add(item.get("call_id"))
+                    termination_failed |= action.get("status") in ("failed", "failure", "error")
+            elif item.get("type") == "computer_call" and (item.get("action") or {}).get("type") == "terminate":
+                terminate_ids.add(item.get("call_id"))
+                termination_failed |= item["action"].get("status") in ("failed", "failure", "error")
+            elif item.get("type") in ("function_call_output", "computer_call_output") and item.get("call_id") in terminate_ids:
+                terminated = True
+                output = item.get("output")
+                if isinstance(output, str):
+                    try:
+                        output = json.loads(output)
+                    except ValueError:
+                        termination_failed |= output.lower().startswith("error")
+                if isinstance(output, dict):
+                    termination_failed |= output.get("success") is False or output.get("status") in ("failed", "failure", "error") or "error" in output
 
+        transcript.write_items(output_items)
         if actions:
             logger.info("  [GUI %s] step %d: %s", run_id, step, actions)
-            transcript.write_turn(step, actions, output_items, is_done)
             step += 1
 
-        if is_done:
-            terminated = True
-            break
-
-        if step >= max_steps:
-            break
-
-    if terminated:
+    if terminated and not termination_failed:
         return last_text or "(no summary)"
-    if step >= max_steps:
-        return f"max_steps ({max_steps}) reached without completion"
-    return last_text or "(completed)"
+    if termination_failed:
+        raise RuntimeError("GUI subagent terminated with failure")
+    raise RuntimeError(f"GUI subagent exited without terminate (max_steps={max_steps})")
 
 
 async def run_gui_subagent(
@@ -403,6 +445,7 @@ async def run_gui_subagent(
     thinking_params: dict[str, Any] | None = None,
     parent_session_dir: str | Path | None = None,
     memory_store: MemoryStore | None = None,
+    credentials: dict[str, str] | None = None,
 ) -> str:
     """Blocking vision-to-action relay loop via ComputerAgent.
 
@@ -431,13 +474,16 @@ async def run_gui_subagent(
     registry.attach_inbox(run_id, inbox)
 
     try:
-        agent = await _build_gui_agent(session, model, thinking_params, memory_store, inbox)
+        agent = await _build_gui_agent(session, model, thinking_params, memory_store, inbox, max_steps)
         summary = await _relay_until_done(
-            agent, instruction, run_id, max_steps, usage, transcript
+            agent, instruction, run_id, max_steps, usage, transcript, credentials
         )
         registry.complete(run_id, summary, usage)
         return summary
 
+    except asyncio.CancelledError:
+        registry.kill(run_id, usage)
+        raise
     except Exception as e:
         registry.fail(run_id, str(e), usage)
         raise

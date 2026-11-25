@@ -6,15 +6,17 @@ import argparse
 import asyncio
 import json
 import logging
+import math
 import sys
 from pathlib import Path
-
-import ale_run as ale
+from uuid import uuid4
 
 from .orchestration import Runner
 from .orchestration.config_loader import load_experiment
 from .orchestration.experiment_spec import RunUnit
 from .orchestration.run_writer import slug_agent, slug_model, slug_task
+from .tasks import list_tasks
+from .tasks.revision import task_revision
 
 logger = logging.getLogger(__name__)
 
@@ -127,10 +129,19 @@ async def _cmd_run(args: argparse.Namespace) -> int:
 
 
 def _cmd_list(args: argparse.Namespace) -> int:
-    envs = ale.list_envs()
-    print(f"discoverable tasks ({len(envs)}):")
-    for e in envs:
-        print(f"  {e}")
+    root = Path("tasks")
+    tasks = list_tasks(root)
+    print(f"discoverable tasks ({len(tasks)}):")
+    for task in tasks:
+        line = f"  {task}"
+        if args.verbose:
+            card = _read_task_card(root / task)
+            vm = card.get("vm")
+            snapshot = vm.get("snapshot") if isinstance(vm, dict) else None
+            snapshot = snapshot or card.get("snapshot") or card.get("vm_category") or ""
+            title = card.get("title") or ""
+            line = f"  {task:<50} {snapshot!s:<18} {title}"
+        print(line)
     return 0
 
 
@@ -145,6 +156,24 @@ async def _cmd_rollout(args: argparse.Namespace) -> int:
             print(format_plan(plan))
         return 0
 
+    from .model_transport import check_managed_transport
+
+    for agent in plan.experiment.agents:
+        report = await asyncio.to_thread(
+            check_managed_transport, agent.config, plan.source_path.parent,
+        )
+        if report["status"] == "unreachable":
+            report.update(status="not_executed", score=None)
+            directory = Path(plan.manifest["run"]["output_root"]) / plan.experiment.name
+            directory.mkdir(parents=True, exist_ok=True)
+            report_path = directory / f"transport-preflight-{uuid4().hex}.json"
+            report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+            if args.json_output:
+                print(json.dumps(report, indent=2))
+            else:
+                print(f"Managed model transport is unreachable; report: {report_path}")
+            return 2
+
     result, summary = await run_rollout(plan)
     if args.json_output:
         print(json.dumps(summary, indent=2, ensure_ascii=False))
@@ -153,6 +182,15 @@ async def _cmd_rollout(args: argparse.Namespace) -> int:
         if result.run_dir is not None:
             print(f"\nrun directory: {result.run_dir.resolve()}")
     return 0 if result.status == "completed" else 1
+
+
+def _read_task_card(task_dir: Path) -> dict:
+    """Best-effort read of task_card.json; return {} if missing or malformed."""
+    try:
+        data = json.loads((task_dir / "task_card.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 # =============================================================================
@@ -167,15 +205,13 @@ def _filter_units(units: list[RunUnit], args: argparse.Namespace) -> list[RunUni
     return units
 
 
-def _unit_already_done(unit: RunUnit, output_root: Path) -> bool:
-    """True if a prior run of this unit reached a resume-skippable status.
-
-    Mirrors :class:`RunWriter`'s on-disk layout
-    ``<output_root>/<agent>/<model>/<task>/v<i>/<ts>/run.json`` and scans every
-    timestamped run dir; the unit is "done" if ANY of them has a ``status`` in
-    :data:`_RESUME_DONE_STATUSES`. Unreadable / malformed run.json files are
-    ignored (treated as not-done, so the unit re-runs).
-    """
+def _unit_already_done(
+    unit: RunUnit,
+    output_root: Path,
+    *,
+    revisions: dict[str, str] | None = None,
+) -> bool:
+    """Skip scored completed/timeout runs whose task-folder revision still matches."""
     model = (unit.agent_spec.config or {}).get("model", "")
     v_dir = (
         output_root
@@ -186,26 +222,48 @@ def _unit_already_done(unit: RunUnit, output_root: Path) -> bool:
     )
     if not v_dir.is_dir():
         return False
+    revisions = revisions if revisions is not None else {}
+    if unit.task_path not in revisions:
+        try:
+            revisions[unit.task_path] = task_revision(Path("tasks") / unit.task_path)
+        except (OSError, ValueError, RuntimeError) as exc:
+            logger.warning("Cannot verify task revision for %s: %s", unit.task_path, exc)
+            return False
     for ts_dir in v_dir.iterdir():
         run_json = ts_dir / "run.json"
         if not run_json.is_file():
             continue
         try:
-            status = json.loads(run_json.read_text(encoding="utf-8")).get("status")
+            record = json.loads(run_json.read_text(encoding="utf-8"))
+            evaluation = json.loads((ts_dir / "eval_result.json").read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
-        if status in _RESUME_DONE_STATUSES:
+        if not isinstance(record, dict) or not isinstance(record.get("task"), dict):
+            continue
+        score = record.get("score")
+        if (
+            record.get("status") in _RESUME_DONE_STATUSES
+            and record["task"].get("revision") == revisions[unit.task_path]
+            and isinstance(score, (int, float)) and not isinstance(score, bool)
+            and math.isfinite(score) and 0 <= score <= 1
+            and isinstance(evaluation, dict)
+            and evaluation.get("eval_status") == "success"
+            and not evaluation.get("error")
+            and not isinstance(evaluation.get("score"), bool)
+            and evaluation.get("score") == score
+        ):
             return True
     return False
 
 
 def _filter_resume(units: list[RunUnit], output_root: Path) -> list[RunUnit]:
-    """Drop units that already have a completed/timeout run on disk."""
-    keep = [u for u in units if not _unit_already_done(u, output_root)]
+    """Drop completed/timeout units only when their task-folder revision matches."""
+    revisions: dict[str, str] = {}
+    keep = [u for u in units if not _unit_already_done(u, output_root, revisions=revisions)]
     skipped = len(units) - len(keep)
     if skipped:
         logger.info(
-            "resume: %d unit(s) already completed/timeout — skipping; running %d",
+            "resume: %d unit(s) completed/timeout at the current task revision; running %d",
             skipped, len(keep),
         )
     else:

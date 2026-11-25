@@ -196,7 +196,7 @@ async def _run_docker(*args: str) -> tuple[int, str, str]:
         stdout_b, stderr_b = await asyncio.wait_for(
             proc.communicate(), timeout=_DOCKER_QUERY_TIMEOUT if query else None,
         )
-    except (asyncio.TimeoutError, asyncio.CancelledError) as exc:
+    except (TimeoutError, asyncio.CancelledError) as exc:
         # A stuck query must not keep the cross-runner CPU allocation lock.
         if proc.returncode is None:
             try:
@@ -204,8 +204,8 @@ async def _run_docker(*args: str) -> tuple[int, str, str]:
             except ProcessLookupError:
                 pass
         await proc.communicate()
-        if isinstance(exc, asyncio.TimeoutError):
-            raise RuntimeError(
+        if isinstance(exc, TimeoutError):
+            raise RuntimeError(  # noqa: TRY004
                 f"docker {' '.join(args[:2])} exceeded {_DOCKER_QUERY_TIMEOUT:g}s"
             ) from exc
         raise
@@ -355,7 +355,7 @@ async def _ensure_task_numpy(container_name: str, container_ref: str) -> None:
     # is responsible for its own dependency set.
     if container_ref.startswith("ale/base-life-scib-atlas-integration:"):
         return
-    if not (container_ref.startswith("ale/base-") or container_ref.startswith("ghcr.io/")):
+    if not container_ref.startswith(("ale/base-", "ghcr.io/")):
         return
     python = "/opt/cua-server/.venv/bin/python"
     rc, _, _ = await _run_docker(
@@ -373,7 +373,7 @@ async def _ensure_task_numpy(container_name: str, container_ref: str) -> None:
             ),
             timeout=120,
         )
-    except asyncio.TimeoutError as exc:
+    except TimeoutError as exc:
         raise RuntimeError(
             f"Timed out installing NumPy in task container {container_name}"
         ) from exc
@@ -417,16 +417,16 @@ async def _get_image_provenance(
     # importer stamps the original registry digest in this label so the
     # binding remains auditable without accepting an arbitrary mismatch.
     reconstructed_digest = None
-    rc, labels_json, labels_stderr = await _run_docker(
-        "image", "inspect", "--format", "{{json .Config.Labels}}", image_id,
-    )
-    if rc == 0:
-        labels = json.loads(labels_json) or {}
-        if isinstance(labels, dict):
-            reconstructed_digest = labels.get("io.ale.reconstructed.source-digest")
     accepted_revision = config.image_revision in {image_id, *digests}
-    if not accepted_revision and reconstructed_digest == config.image_revision:
-        accepted_revision = True
+    if config.image_revision is not None and not accepted_revision:
+        rc, labels_json, _ = await _run_docker(
+            "image", "inspect", "--format", "{{json .Config.Labels}}", image_id,
+        )
+        if rc == 0:
+            labels = json.loads(labels_json) or {}
+            if isinstance(labels, dict):
+                reconstructed_digest = labels.get("io.ale.reconstructed.source-digest")
+        accepted_revision = reconstructed_digest == config.image_revision
     if config.image_revision is not None and not accepted_revision:
         raise RuntimeError(
             f"Docker image_revision mismatch: expected {config.image_revision}, "
@@ -438,7 +438,7 @@ async def _get_image_provenance(
         "image_revision": selected_digest or config.image_revision or image_id,
         "image_ref": container_ref,
         "image_id": image_id,
-        "reconstructed_from": reconstructed_digest,
+        **({"reconstructed_from": reconstructed_digest} if reconstructed_digest else {}),
     }
 
 

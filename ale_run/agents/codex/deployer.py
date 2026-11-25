@@ -1,4 +1,4 @@
-"""CodexDeployer — drives the OpenAI ``codex`` CLI (fork build, reports 0.0.0).
+"""CodexDeployer drives a pinned fork or official OpenAI Codex CLI.
 
 The deployer ensures the running ``codex`` is exactly the pinned fork build
 (``CodexConfig.fork_version``): it compares ``codex --version`` and overlays the
@@ -6,6 +6,7 @@ fork native binary from a GitHub Release when missing/stale/stock (installing
 stock from NPM first if nothing is on PATH), else skips the download. The fork =
 openai/codex ``main`` + Windows ``apply_patch.exe`` fix + OpenRouter MCP
 adaptation (see CodexConfig).
+An empty ``fork_version`` selects the official npm ``cli_version`` instead.
 
 OpenRouter routing: ``OPENROUTER_API_KEY`` + ``config.toml`` with
 ``model_provider = "openrouter"`` and a custom model_providers block. Direct
@@ -88,20 +89,11 @@ class CodexDeployer(BaseAgentDeployer):
 
     _SESSION_ARTIFACT_DIR: ClassVar[str] = "codex_session"
 
-    # NPM stock fallback version (only relevant when nothing is on PATH and the
-    # fork overlay is then applied on top). Last-resort value for ``version``.
-    _PINNED_VERSION: ClassVar[str] = "0.114.0"
-
     @property
     def version(self) -> str | None:
-        """Pinned build the deployer guarantees is running.
-
-        Reports the fork build (``CodexConfig.fork_version`` — what install()
-        ensures on PATH), not the npm stock fallback, so run metadata records
-        the engine that actually executed.
-        """
+        """Pinned fork or official release verified by ``install()``."""
         cfg: CodexConfig = self.config  # type: ignore[assignment]
-        return getattr(cfg, "fork_version", None) or self._PINNED_VERSION
+        return cfg.fork_version or cfg.cli_version
 
     # =========================================================================
     # install
@@ -118,43 +110,33 @@ class CodexDeployer(BaseAgentDeployer):
         from ale_run.agents._bootstrap import ensure_npm
         self._npm_path = await ensure_npm()
 
-        # Ensure the running codex is exactly the pinned fork build
-        # (cfg.fork_version), comparing `codex --version`:
-        #   * not on PATH        -> npm install stock, then overlay the fork
-        #   * present, wrong ver -> overlay the fork (download)  [e.g. a stale
-        #                           baked fork, or stock]
-        #   * present, matches   -> already current, skip the GitHub download
-        #                           (matters at concurrency × 135 tasks)
-        # We compare the FULL version string (not a 0.0.0 sentinel) so an old
-        # fork build is correctly seen as stale and replaced — there is no
-        # silent fall back to stock/old.
+        expected_version = cfg.fork_version or cfg.cli_version
         patched_url = (
             cfg.patched_binary_url_windows if self._is_windows
             else cfg.patched_binary_url
         )
         codex_path = shutil.which("codex")
         already_current = bool(codex_path) and await self._version_matches(
-            codex_path, cfg.fork_version
+            codex_path, expected_version
         )
-        need_overlay = True
-        if not codex_path:
+        need_overlay = bool(cfg.fork_version) and not already_current
+        if not codex_path or (not cfg.fork_version and not already_current):
             logger.info(
-                "codex: not found on PATH, installing @openai/codex@%s via npm ...",
-                cfg.codex_version,
+                "codex: installing @openai/codex@%s via npm ...",
+                cfg.cli_version,
             )
-            await self._npm_install_codex(cfg.codex_version)
+            await self._npm_install_codex(cfg.cli_version)
             codex_path = shutil.which("codex")
             if not codex_path:
                 raise RuntimeError(
                     "CodexDeployer: 'codex' still not found after "
-                    f"npm install -g @openai/codex@{cfg.codex_version}"
+                    f"npm install -g @openai/codex@{cfg.cli_version}"
                 )
         elif already_current:
             logger.info(
-                "codex: %s already at pinned %s, skipping overlay",
-                codex_path, cfg.fork_version,
+                "codex: %s already at pinned %s",
+                codex_path, expected_version,
             )
-            need_overlay = False
         else:
             logger.info(
                 "codex: %s present but not at pinned %s — overlaying fork",
@@ -171,8 +153,6 @@ class CodexDeployer(BaseAgentDeployer):
                 )
             await self._replace_native_binary(patched_url)
 
-        # 3. Verify codex --version is now the pinned fork (ensure latest or fail
-        # loudly — never silently run a stale build).
         try:
             probe = await asyncio.to_thread(
                 subprocess.run,
@@ -183,11 +163,13 @@ class CodexDeployer(BaseAgentDeployer):
             raise RuntimeError(f"codex --version timed out: {e}")
         version_out = (probe.stdout or "").strip()
         logger.info("codex: CLI ok -- %s", version_out)
-        if need_overlay and cfg.fork_version not in version_out:
+        if probe.returncode != 0 or version_out != f"codex-cli {expected_version}":
             raise RuntimeError(
-                f"codex: overlay did not yield pinned {cfg.fork_version!r} "
+                f"codex: installation did not yield pinned {expected_version!r} "
                 f"(got {version_out!r}); refusing to run a stale build"
             )
+        self.actual_cli_version = version_out.removeprefix("codex-cli ")
+        self.cli_source = "fork" if cfg.fork_version else "official"
 
         # 4. Prepare work directory
         wd = Path(self.executor.work_dir)
@@ -211,7 +193,7 @@ class CodexDeployer(BaseAgentDeployer):
             )
         except (subprocess.TimeoutExpired, OSError):
             return False
-        return version in (probe.stdout or "")
+        return probe.returncode == 0 and (probe.stdout or "").strip() == f"codex-cli {version}"
 
     async def _npm_install_codex(self, version: str) -> None:
         """Install Codex CLI globally via npm."""
@@ -366,6 +348,10 @@ class CodexDeployer(BaseAgentDeployer):
         # Build TOML content.
         # Top-level keys MUST appear before any [table] header in TOML.
         preamble = f'model_reasoning_effort = "{cfg.reasoning_effort}"\n'
+        if cfg.context_window is not None:
+            preamble += f"model_context_window = {cfg.context_window}\n"
+        if cfg.auto_compact_token_limit is not None:
+            preamble += f"model_auto_compact_token_limit = {cfg.auto_compact_token_limit}\n"
 
         # Provider-driven routing (explicit, not model-name heuristic).
         is_openrouter = (cfg.provider == "openrouter")
@@ -402,12 +388,16 @@ class CodexDeployer(BaseAgentDeployer):
         # ale-kasm which runs on 8000). URL is host:port only — no backslashes,
         # safe in a TOML basic string.
         cua_url = self.executor.cua_bridge_url()
+        coordinate_space = cfg.coordinate_space or (
+            "normalized" if "gemini" in cfg.model.lower() else "pixel"
+        )
         config_toml += (
             "[mcp_servers.cua]\n"
             'type = "stdio"\n'
             f'command = "{node_exe}"\n'
             f'args = ["{mcp_entry}"]\n'
-            f'env = {{ CUA_SERVER_URL = "{cua_url}" }}\n'
+            f'env = {{ CUA_SERVER_URL = "{cua_url}", '
+            f'CUA_COORDINATE_SPACE = "{coordinate_space}" }}\n'
         )
 
         # OpenRouter provider block

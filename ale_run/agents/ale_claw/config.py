@@ -5,8 +5,8 @@ Standalone config (no shared base). Declares ``model`` / ``max_turns``
 below. The episode wall-budget is orchestration-owned, so this config no
 longer carries ``timeout_s``.
 
-**API keys live in the operator's shell env**, not in this config. The
-deployer never touches ``os.environ`` — litellm (the harness's LLM
+API keys normally live in the operator's shell environment. The deployer
+never touches ``os.environ`` — litellm (the harness's LLM
 client) reads ``OPENROUTER_API_KEY`` / ``ANTHROPIC_API_KEY`` /
 ``OPENAI_API_KEY`` directly from the process's env vars, which the
 operator populates via shell ``source`` of an ``.env`` / ``.envrc``.
@@ -51,7 +51,7 @@ class AleClawConfig:
     default. Pair with an ``openai/<model>`` model id to route via LiteLLM's
     OpenAI-compatible client at this base."""
 
-    api_key: str | None = None
+    api_key: str | None = field(default=None, repr=False)
     """Literal API key for ``base_url``. When set (typically via
     ``api_key: ${env:...}`` in the agent yaml, resolved host-side), it is passed
     to ``agent.run(api_key=...)`` → ``litellm`` as a direct kwarg and also
@@ -60,11 +60,11 @@ class AleClawConfig:
     creds from env as before."""
 
     extra_generation_kwargs: dict = field(default_factory=dict)
-    """Extra kwargs merged into every model request (passed to ``agent.run`` →
-    ``litellm``). An escape hatch for gateway-specific quirks the loop hardcodes
-    otherwise. Later keys win, so this overrides the loop's defaults. Example for
-    Meta's Responses gateway (which rejects the loop's default ``truncation:
-    auto``): ``{truncation: disabled}``. Empty ⇒ loop defaults unchanged."""
+    """Extra model options. The main loop receives all options. Compatible
+    options also reach helpers and subagents: gateway-specific options stay on
+    the same provider, while sampling options follow an explicitly different
+    provider. Helper-owned token limits, timeouts, and Responses-only truncation
+    are not overridden. Per-helper thinking settings take precedence."""
 
     max_turns: int | None = 100
     """Mapped to OpenClaw's ``max_steps``. Hard ceiling on the agent run loop."""
@@ -94,37 +94,9 @@ class AleClawConfig:
     disable_delegate_gui: bool = False
     """If True, no GUI subagent — main agent uses its own ``computer``."""
 
-    disabled_tools: list[str] = field(default_factory=lambda: ["web_search"])
+    disabled_tools: list[str] = field(default_factory=list)
     """Tools to drop from the assembled tool list (matched by ``BaseTool.name``).
-    Defaults to ``["web_search"]`` because BRAVE_API_KEY is rarely provisioned;
-    set to ``[]`` to opt back in (and ensure ``BRAVE_API_KEY`` is exported in
-    your shell)."""
-
-    # ---- substrate transport ----
-    substrate_transport: str = "mcp"
-    """How the non-GUI tools (``read``/``write``/``edit``/``exec``) reach the VM.
-
-    - ``"mcp"`` (default): route through the ``vm_mcp_server`` bridge — the agent
-      consumes the same MCP substrate as installed agents. Tool granularity is
-      unchanged; only the transport moves off ``RemoteDesktopSession``.
-    - ``"session"``: legacy direct ``session.interface`` RPC. Retained as a
-      debug / parity escape hatch; may be removed once the MCP path is validated.
-
-    GUI (the ``computer`` tool) is governed separately by :attr:`gui_transport`."""
-
-    gui_transport: str | None = None
-    """How the GUI ``computer`` tool reaches the VM (Phase 2).
-
-    - ``None`` (default): follow :attr:`substrate_transport` — so GUI is ``"mcp"``
-      by default, and a ``substrate_transport="session"`` run stays all-session
-      without having to flip this too.
-    - ``"mcp"``: route GUI through the ``cua_mcp_server`` bridge — clicks/keys/
-      screenshots become MCP tool calls (pixel↔[0,1000] conversion in the
-      handler). Requires ``substrate_transport="mcp"``.
-    - ``"session"``: the cua ``RemoteDesktopSession`` handler (pixel coords).
-
-    With both transports on ``"mcp"`` (the default), ale_claw never touches
-    ``RemoteDesktopSession`` for tool I/O."""
+    Empty by default; ``web_search`` requires ``BRAVE_API_KEY`` to work."""
 
     # ---- pointer coordinate space ----
     coordinate_space: str | None = None
@@ -173,23 +145,11 @@ class AleClawConfig:
                 "Both disable_main_computer and disable_delegate_gui set — "
                 "agent has no way to interact with the VM."
             )
-        if self.substrate_transport not in ("mcp", "session"):
-            raise ValueError(
-                f"AleClawConfig.substrate_transport={self.substrate_transport!r} "
-                "not in {mcp, session}"
-            )
-        if self.gui_transport is not None and self.gui_transport not in ("mcp", "session"):
-            raise ValueError(
-                f"AleClawConfig.gui_transport={self.gui_transport!r} not in {{mcp, session, None}}"
-            )
-        # An explicit gui=mcp on a session substrate is a genuine conflict; the
-        # None default instead *follows* substrate (so session mode just works).
-        if self.gui_transport == "mcp" and self.substrate_transport != "mcp":
-            raise ValueError(
-                "AleClawConfig.gui_transport='mcp' requires substrate_transport='mcp'"
-            )
-        if self.gui_transport is None:
-            self.gui_transport = self.substrate_transport
+        if self.max_turns is not None and self.max_turns < 1:
+            raise ValueError("AleClawConfig.max_turns must be positive")
+        reserved = {"api_key", "api_base", "max_turns"} & self.extra_generation_kwargs.keys()
+        if reserved:
+            raise ValueError(f"Use dedicated configuration fields instead of extra_generation_kwargs: {sorted(reserved)}")
         if self.coordinate_space is not None and self.coordinate_space not in (
             "pixel",
             "normalized",

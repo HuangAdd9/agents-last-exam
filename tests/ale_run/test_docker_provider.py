@@ -10,6 +10,7 @@ from ale_run.environments.providers import docker
 from ale_run.environments.providers import docker as docker_module
 from ale_run.environments.providers.docker import DockerProvider, DockerProviderConfig
 from ale_run.orchestration.config_loader import _build_per_snapshot_env
+from ale_run.orchestration.factory import EnvironmentRouter
 
 _IMAGE_ID = "sha256:" + "1" * 64
 _REPO_DIGEST = "sha256:" + "2" * 64
@@ -132,6 +133,8 @@ async def test_acquire_cleans_up_when_image_identity_cannot_be_verified(monkeypa
         responses.append(
             (1, "", "image inspect unavailable") if failure == "image_inspect" else (0, "[]", "")
         )
+    if failure == "expected_pin":
+        responses.append((0, "{}", ""))
     responses.append((0, "removed", ""))
     commands = AsyncMock(side_effect=responses)
     readiness = AsyncMock(return_value=True)
@@ -162,9 +165,30 @@ def test_loader_forwards_docker_image_revision():
         },
     }, "environment.yaml")
 
-    provider = docker.DockerProvider(environment.provider_specs["docker"].config)
+    provider = EnvironmentRouter(environment).provider_for("cpu-free")
 
     assert provider.config.image_revision == _REPO_DIGEST
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("matches", [True, False])
+async def test_reconstructed_image_requires_matching_source_digest(monkeypatch, matches):
+    source_digest = _REPO_DIGEST if matches else "sha256:" + "9" * 64
+    commands = AsyncMock(side_effect=[
+        (0, _IMAGE_ID, ""),
+        (0, "[]", ""),
+        (0, json.dumps({"io.ale.reconstructed.source-digest": source_digest}), ""),
+    ])
+    monkeypatch.setattr(docker, "_run_docker", commands)
+    config = DockerProviderConfig(image_revision=_REPO_DIGEST)
+    if matches:
+        provenance = await docker._get_image_provenance("sandbox", config, "image:local")
+        assert provenance["image_revision"] == _REPO_DIGEST
+        assert provenance["image_id"] == _IMAGE_ID
+        assert provenance["reconstructed_from"] == _REPO_DIGEST
+    else:
+        with pytest.raises(RuntimeError, match="image_revision mismatch"):
+            await docker._get_image_provenance("sandbox", config, "image:local")
 
 
 @pytest.mark.asyncio

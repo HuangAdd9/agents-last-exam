@@ -1,13 +1,7 @@
 """CodexConfig: per-episode knobs for the OpenAI Codex CLI deployer.
 
-The deployer ensures the running codex is exactly the pinned **fork** build
-(``fork_version``, e.g. ``codex-cli 0.0.0-agenthle-20260614``): it compares
-``codex --version`` and, when the binary is missing/stale/stock, installs stock
-``@openai/codex`` from NPM (if needed) and overlays the fork native binary from
-the GitHub Release; a matching version skips the download. The fork = openai/codex
-``main`` merged in, plus two carries: the Windows ``apply_patch.exe`` hardlink
-fix and the OpenRouter MCP adaptation (namespaced-tool flatten + dispatch
-remap). Built from cua-verse/codex ``agenthle``; published as the release below.
+The default is the official npm release pinned by ``cli_version``. Existing
+experiments can still specify ``fork_version`` and their fork binary URLs.
 
 Auth: OpenRouter routing uses ``OPENROUTER_API_KEY`` injected via env.
 Direct OpenAI routing uses ``OPENAI_API_KEY``. ChatGPT subscription routing
@@ -32,11 +26,7 @@ _FORK_KNOWN_REASONING_EFFORTS = frozenset(
     {"none", "minimal", "low", "medium", "high", "xhigh", "max"}
 )
 
-# NPM fallback version: only used when NO codex is on PATH (rare — images bake
-# the fork). The stock package is installed then the fork binary is overlaid, so
-# this is just the stock base the overlay replaces. Pin a real published stock
-# version so the fallback install succeeds.
-_DEFAULT_CODEX_VERSION = "0.114.0"
+_DEFAULT_CODEX_VERSION = "0.163.0"
 
 # GitHub Release of the fork native binary, per OS. Downloaded and overlaid over
 # the vendor binary whenever the running version != ``fork_version``.
@@ -113,8 +103,14 @@ class CodexConfig:
     # the Responses-API wire as ``reasoning.effort``.
     reasoning_effort: str = "high"
 
-    # NPM package version to install.
-    codex_version: str = _DEFAULT_CODEX_VERSION
+    context_window: int | None = None
+    auto_compact_token_limit: int | None = None
+
+    coordinate_space: str | None = None
+    """CUA pointer space: infer normalized for Gemini, pixels otherwise."""
+
+    cli_version: str = _DEFAULT_CODEX_VERSION
+    codex_version: str | None = None
 
     # GitHub Release URL for the patched native binary (Linux musl x86-64).
     # Empty string = skip binary replacement (use npm's bundled binary).
@@ -134,7 +130,8 @@ class CodexConfig:
     # baked-fork-by-sentinel skip, which couldn't tell an old fork from a new one
     # (both reported plain ``0.0.0``). Must match the version baked into the
     # release at ``patched_binary_url`` (see codex-rs workspace Cargo.toml).
-    fork_version: str = "0.0.0-agenthle-20260614"
+    fork_version: str = ""
+    """Optional legacy fork version for reproducing existing experiments."""
 
     # ---- model catalog (models not in codex's bundled catalog) ----
     # Host path to a Codex model-catalog JSON (an external catalog
@@ -208,6 +205,15 @@ class CodexConfig:
                 "rate_limit_backoff_base_s"
             )
 
+        if self.context_window is not None and self.context_window <= 0:
+            raise ValueError("context_window must be positive")
+        if self.auto_compact_token_limit is not None and self.auto_compact_token_limit <= 0:
+            raise ValueError("auto_compact_token_limit must be positive")
+        if self.codex_version is not None:
+            self.cli_version = self.codex_version
+        if self.coordinate_space not in {None, "pixel", "normalized"}:
+            raise ValueError(f"Invalid CodexConfig.coordinate_space: {self.coordinate_space!r}")
+
         # Load the catalog host-side (build_config) and embed its content so it
         # reaches the in-sandbox deployer. On the in-sandbox reconstruction the
         # content kwarg is already populated → we skip the (host-only) file read.
@@ -219,7 +225,7 @@ class CodexConfig:
                     f"codex: model_catalog_path {self.model_catalog_path!r} "
                     f"could not be read: {exc}"
                 ) from exc
-            self.model_catalog_content = _sanitise_catalog_for_fork(raw)
+            self.model_catalog_content = _sanitise_catalog_for_fork(raw) if self.fork_version else raw
 
 
 def _sanitise_catalog_for_fork(raw: str) -> str:

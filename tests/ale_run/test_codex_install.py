@@ -16,7 +16,7 @@ async def test_empty_patch_url_installs_and_uses_pinned_npm_codex(
     """Stock mode must not demand a fork after npm installation succeeds."""
     config = CodexConfig(
         codex_version="0.153.4",
-        fork_version="0.153.4",
+        fork_version="",
         patched_binary_url="",
         patched_binary_url_windows="",
     )

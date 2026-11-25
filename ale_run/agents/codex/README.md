@@ -20,16 +20,10 @@ a stdio transport in `~/.codex/config.toml`.
 
 ## Source Strategy
 
-NPM package: `@openai/codex@0.114.0` (pinned version, installed via
-`npm install -g`).
-
-Optionally, the native `codex` binary shipped by the NPM package is replaced
-with a patched build (downloaded from a configured GitHub Release URL) to fix
-the `apply_patch` corruption bug on Windows. The Linux and Windows builds are
-distinct release assets (musl ELF `codex` vs `codex.exe` for
-`x86_64-pc-windows-msvc`); the deployer downloads `patched_binary_url` on
-Linux and `patched_binary_url_windows` on Windows. Replacement is a no-op when
-the matching URL is empty.
+The default is the official `@openai/codex@0.163.0` package. The installer
+checks `codex --version`, installs the configured version if necessary, and
+verifies it again. The legacy fork remains selectable for existing experiments
+with `fork_version` and its platform-specific binary URLs.
 
 ## Providers
 
@@ -38,8 +32,8 @@ the matching URL is empty.
 | `direct` | `OPENAI_API_KEY` | `gpt-5.4` |
 | `openrouter` | `OPENROUTER_API_KEY` | `openai/gpt-5.4` |
 
-OpenRouter routing is auto-detected when the model ID contains a `/` (e.g.
-`openai/gpt-5.4`). Configuration is written to `~/.codex/config.toml`:
+Routing is selected by `provider`. Configuration is written to
+`~/.codex/config.toml`:
 
 ```toml
 model_provider = "openrouter"
@@ -70,12 +64,12 @@ Config fields (standalone dataclass):
 | `sandbox_mode` | str | `"danger-full-access"` | Codex sandbox policy |
 | `yolo` | bool | `true` | Bypass all approval prompts |
 | `reasoning_effort` | str | `"high"` | Model reasoning effort hint |
-| `codex_version` | str | `"0.114.0"` | NPM package version to install |
-| `patched_binary_url` | str | `""` | GitHub Release URL for patched Linux native binary (`codex`, musl x86-64) |
-| `patched_binary_url_windows` | str | `""` | GitHub Release URL for patched Windows binary (`codex.exe`, windows-msvc); used instead of `patched_binary_url` on Windows |
-| `rate_limit_resume_retries` | int | `4` | Resume the same Codex session after a terminal HTTP 429 |
-| `rate_limit_backoff_base_s` | float | `30.0` | Initial delay before a 429 resume |
-| `rate_limit_backoff_max_s` | float | `240.0` | Maximum exponential-backoff delay |
+| `cli_version` | str | `"0.163.0"` | Pinned official npm package version |
+| `fork_version` | str | `""` | Optional legacy fork version to reproduce an existing run |
+| `patched_binary_url` / `patched_binary_url_windows` | str | legacy release URLs | Fork binaries, used only when `fork_version` is set |
+| `capture_session` | bool | `true` | Preserve the matching Codex session JSONL |
+| `rate_limit_resume_retries` | int | `4` | Resume the same session after HTTP 429 |
+| `rate_limit_backoff_base_s` / `rate_limit_backoff_max_s` | float | `30` / `240` | Resume backoff bounds in seconds |
 
 ## Logs
 
@@ -105,7 +99,7 @@ Item types: `agent_message`, `reasoning`, `command_execution`,
 - Timeout: terminates process, then kills after grace period
 - Exit code: nonzero -> `status: "failed"`
 
-## Patched Binary Paths
+## Legacy Fork Binary Paths
 
 npm 11.x stopped hoisting platform deps so the nested copy is the one
 `codex.js`'s `require.resolve` actually picks. Both paths are checked
