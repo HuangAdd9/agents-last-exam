@@ -416,3 +416,36 @@ async def test_bridge_network_keeps_random_port_mapping(
     assert inspected_ports == [5000, 6901]
     assert sandbox.endpoint == "http://127.0.0.1:15000"
     assert sandbox.metadata["network_mode"] == "bridge"
+
+
+@pytest.mark.parametrize("value", [0, 1, "false", "true", None])
+def test_apparmor_option_rejects_non_boolean_values(value):
+    with pytest.raises(TypeError, match="apparmor_unconfined must be a boolean"):
+        DockerProvider({"apparmor_unconfined": value})
+    with pytest.raises(TypeError, match="apparmor_unconfined must be a boolean"):
+        DockerProviderConfig(apparmor_unconfined=value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("enabled", [None, False, True])
+async def test_apparmor_option_only_disables_profile_when_requested(monkeypatch, enabled):
+    commands = AsyncMock(return_value=(0, "container-id", ""))
+    monkeypatch.setattr(docker, "_run_docker", commands)
+    monkeypatch.setattr(docker, "_get_image_provenance", AsyncMock(return_value={}))
+    monkeypatch.setattr(docker, "_get_host_port", AsyncMock(return_value=32809))
+    monkeypatch.setattr(docker, "_wait_cua_ready", AsyncMock(return_value=True))
+    monkeypatch.setattr(docker, "_get_resource_limits", AsyncMock(return_value={}))
+    options = {} if enabled is None else {"apparmor_unconfined": enabled}
+    environment = _build_per_snapshot_env({"snapshots": {"cpu-free": {
+        "provider": "docker", "image": "ale-kasm", "docker": options,
+    }}}, "environment.yaml")
+    provider = EnvironmentRouter(environment).provider_for("cpu-free")
+    assert provider.config.apparmor_unconfined is (enabled is True)
+    await provider.acquire(SandboxSpec(snapshot="cpu-free"))
+    arguments = commands.await_args_list[0].args
+    if enabled:
+        position = arguments.index("--security-opt")
+        assert arguments[position:position + 2] == ("--security-opt", "apparmor=unconfined")
+    else:
+        assert "--security-opt" not in arguments
+    assert "--privileged" not in arguments

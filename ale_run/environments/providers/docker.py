@@ -86,6 +86,10 @@ class DockerProviderConfig:
                 image starts a fresh inner dockerd. Under ROOTLESS docker this is
                 user-namespace-bounded (container root maps to the unprivileged
                 host user), so it does not expose the host kernel.
+    apparmor_unconfined  Add Docker's ``apparmor=unconfined`` security option.
+                This is needed on hosts whose default AppArmor profile blocks
+                the CUA server's local socketpair; it is narrower than
+                ``privileged`` and does not grant nested-device access.
     image_ref   Override the container ref to boot (default: the Image entry's
                 ``docker_image``). Lets one env config pin a specific tag, e.g.
                 a DinD-capable build, without editing the Image registry.
@@ -99,6 +103,7 @@ class DockerProviderConfig:
     resolution: tuple[int, int] | None = None
     gcs_sa_key: str = ""
     privileged: bool = False
+    apparmor_unconfined: bool = False
     image_ref: str = ""
     network_mode: Literal["bridge", "host"] = "bridge"
     # Start the in-container nested dockerd (DinD) for custom development.
@@ -112,6 +117,8 @@ class DockerProviderConfig:
     lxcfs_root: str = ""
 
     def __post_init__(self) -> None:
+        if not isinstance(self.apparmor_unconfined, bool):
+            raise TypeError("docker apparmor_unconfined must be a boolean")
         if not isinstance(self.allow_swap, bool):
             raise TypeError("docker allow_swap must be a boolean")
         if self.network_mode not in {"bridge", "host"}:
@@ -139,6 +146,7 @@ def _build_provider_config(raw: dict[str, Any]) -> DockerProviderConfig:
         ),
         gcs_sa_key=gcs_sa,
         privileged=bool(raw.get("privileged") or False),
+        apparmor_unconfined=raw.get("apparmor_unconfined", False),
         image_ref=str(raw.get("image_ref") or ""),
         network_mode=str(raw.get("network_mode") or "bridge").strip().lower(),
         enable_dind=bool(raw.get("enable_dind") or False),
@@ -527,6 +535,8 @@ class DockerProvider(Provider):
             # Needed for tasks whose eval runs nested Docker; under rootless
             # docker the privileged container's root is still user-ns-bounded.
             run_args.append("--privileged")
+        if self._cfg.apparmor_unconfined:
+            run_args.extend(["--security-opt", "apparmor=unconfined"])
         # Resource sizing: translate the task-card GCE machine type
         # (spec.machine_type, e.g. "c4-standard-4") into container --cpus/--memory
         # so a Docker sandbox gets the same shape gcloud would give the task. A
